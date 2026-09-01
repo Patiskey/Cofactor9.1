@@ -8,21 +8,31 @@ class AlphabetClassificationTests(unittest.TestCase):
     def test_selenocysteine_is_valid_but_informationally_flagged(self):
         result = classify_alphabet("ACUG")
 
-        self.assertEqual(result["status"], "HAS_U")
+        self.assertEqual(result["status"], "SELENOCYSTEINE_U")
         self.assertEqual(result["nonstandard_symbols"], ["U"])
         self.assertEqual(result["reason_codes"], ["SELENOCYSTEINE_U"])
 
     def test_unknown_residue_is_exclusion_relevant(self):
         result = classify_alphabet("ACXG")
 
-        self.assertEqual(result["status"], "HAS_X")
+        self.assertEqual(result["status"], "UNKNOWN_X")
         self.assertEqual(result["reason_codes"], ["UNKNOWN_RESIDUE_X"])
 
     def test_other_noncanonical_symbol_is_invalid(self):
         result = classify_alphabet("ACBG")
 
-        self.assertEqual(result["status"], "INVALID")
+        self.assertEqual(result["status"], "OTHER_NONSTANDARD")
         self.assertEqual(result["nonstandard_symbols"], ["B"])
+
+    def test_u_and_x_have_a_distinct_exclusive_status(self) -> None:
+        result = classify_alphabet("ACUXG")
+
+        self.assertEqual(result["status"], "SELENOCYSTEINE_U_AND_UNKNOWN_X")
+        self.assertEqual(result["nonstandard_symbols"], ["U", "X"])
+        self.assertEqual(
+            result["reason_codes"],
+            ["SELENOCYSTEINE_U", "UNKNOWN_RESIDUE_X"],
+        )
 
 
 class ConservativeTriageTests(unittest.TestCase):

@@ -16,17 +16,19 @@ def classify_alphabet(sequence: str) -> dict[str, Any]:
     invalid = [symbol for symbol in symbols if symbol not in {"U", "X"}]
     reasons: list[str] = []
     if invalid:
-        status = "INVALID"
-    elif "X" in symbols:
-        status = "HAS_X"
+        status = "OTHER_NONSTANDARD"
+    elif "U" in symbols and "X" in symbols:
+        status = "SELENOCYSTEINE_U_AND_UNKNOWN_X"
         reasons.append("UNKNOWN_RESIDUE_X")
-        if "U" in symbols:
-            reasons.append("SELENOCYSTEINE_U")
+        reasons.append("SELENOCYSTEINE_U")
+    elif "X" in symbols:
+        status = "UNKNOWN_X"
+        reasons.append("UNKNOWN_RESIDUE_X")
     elif "U" in symbols:
-        status = "HAS_U"
+        status = "SELENOCYSTEINE_U"
         reasons.append("SELENOCYSTEINE_U")
     else:
-        status = "AA20_ONLY"
+        status = "STANDARD"
     return {
         "status": status,
         "nonstandard_symbols": symbols,
