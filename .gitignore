@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.*
+!.env.example
+.venv/
+.pytest_cache/
+
+# Immutable source snapshots are local artifacts tracked by manifests/hashes.
+data/raw/*.json
+data/raw/*.json.gz
+data/raw/*.obo
+data/raw/*.owl
+
+# Large generated run payloads remain local but are fully manifested.
+runs/*/attempts/
+runs/*/raw_responses/

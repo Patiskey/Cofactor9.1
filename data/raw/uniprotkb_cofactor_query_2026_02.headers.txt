@@ -1,0 +1,18 @@
+HTTP/2 200 
+vary: accept,accept-encoding,x-uniprot-release,x-api-deployment-date, User-Agent, Accept-Encoding
+cache-control: public, max-age=43200
+content-type: application/json
+content-encoding: gzip
+access-control-allow-credentials: true
+access-control-expose-headers: Link, X-Total-Results, X-UniProt-Release, X-UniProt-Release-Date, X-API-Deployment-Date
+x-api-deployment-date: 29-July-2026
+strict-transport-security: max-age=31536000; includeSubDomains
+date: Tue, 01 Sep 2026 16:35:57 GMT
+access-control-max-age: 1728000
+x-uniprot-release: 2026_02
+access-control-allow-origin: *
+accept-ranges: bytes
+access-control-allow-methods: GET, PUT, POST, DELETE, PATCH, OPTIONS
+access-control-allow-headers: DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization
+x-uniprot-release-date: 10-June-2026
+
