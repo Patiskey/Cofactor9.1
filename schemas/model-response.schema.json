@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cofactor9.1.invalid/schemas/model-response.schema.json",
+  "title": "Cofactor9.1 sequence-only model response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "sample_id",
+    "status",
+    "best_guess",
+    "confidence_complete"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "cofactor9.1.response.v1"
+    },
+    "sample_id": {
+      "type": "string",
+      "pattern": "^sample_[0-9a-f]{32}$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "predict",
+        "abstain"
+      ]
+    },
+    "best_guess": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 104,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^CHEBI:[1-9][0-9]*$"
+      }
+    },
+    "confidence_complete": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    }
+  }
+}
