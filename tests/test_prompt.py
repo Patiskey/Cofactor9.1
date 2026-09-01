@@ -159,11 +159,15 @@ class ModelResponseSchemaTests(unittest.TestCase):
             "cofactor9.1.response.v1",
         )
         self.assertEqual(
+            schema["properties"]["schema_version"]["type"],
+            "string",
+        )
+        self.assertEqual(
             schema["properties"]["status"]["enum"],
             ["predict", "abstain"],
         )
         self.assertEqual(schema["properties"]["best_guess"]["minItems"], 1)
-        self.assertTrue(schema["properties"]["best_guess"]["uniqueItems"])
+        self.assertNotIn("uniqueItems", schema["properties"]["best_guess"])
 
 
 if __name__ == "__main__":

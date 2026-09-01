@@ -13,6 +13,7 @@
   ],
   "properties": {
     "schema_version": {
+      "type": "string",
       "const": "cofactor9.1.response.v1"
     },
     "sample_id": {
@@ -30,7 +31,6 @@
       "type": "array",
       "minItems": 1,
       "maxItems": 104,
-      "uniqueItems": true,
       "items": {
         "type": "string",
         "pattern": "^CHEBI:[1-9][0-9]*$"

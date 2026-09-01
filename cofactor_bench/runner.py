@@ -43,8 +43,6 @@ DISABLED_FEATURES = (
     "skill_search",
     "view_image",
     "standalone_web_search",
-    "web_search_cached",
-    "web_search_request",
     "hooks",
     "goals",
 )

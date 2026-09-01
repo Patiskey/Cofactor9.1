@@ -232,6 +232,8 @@ class CodexExecRunnerTests(unittest.TestCase):
             if value == "--disable"
         ]
         self.assertEqual(tuple(disabled), DISABLED_FEATURES)
+        self.assertNotIn("web_search_cached", disabled)
+        self.assertNotIn("web_search_request", disabled)
         self.assertIn("--ignore-user-config", argv)
         self.assertIn("--ignore-rules", argv)
         self.assertIn("--strict-config", argv)
