@@ -2429,6 +2429,7 @@ def _validate_invocations(
         )
         if any(
             value.startswith("--")
+            and value != "--deepseek-api-key-stdin"
             and any(marker in value.casefold() for marker in secret_flags)
             for value in argv
         ):

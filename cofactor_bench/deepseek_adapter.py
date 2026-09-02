@@ -13,6 +13,7 @@ API contract sources:
 from __future__ import annotations
 
 from collections.abc import Mapping
+import http.client
 import json
 import os
 import sys
@@ -27,7 +28,7 @@ REASONING_EFFORT = "none"
 SERVICE_TIER = "default"
 THINKING_TYPE = "disabled"
 MAX_OUTPUT_TOKENS = 2_048
-ADAPTER_VERSION = "cofactor9.1-deepseek-adapter 1.1.0"
+ADAPTER_VERSION = "cofactor9.1-deepseek-adapter 1.2.0"
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 600.0
 
@@ -206,8 +207,11 @@ def perform_request(
     transport = (
         urllib.request.build_opener(_NoRedirect()) if opener is None else opener
     )
-    with transport.open(request, timeout=float(timeout)) as response:
-        raw = response.read(MAX_RESPONSE_BYTES + 1)
+    try:
+        with transport.open(request, timeout=float(timeout)) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except http.client.IncompleteRead as error:
+        raise urllib.error.URLError("incomplete DeepSeek HTTP response") from error
     if len(raw) > MAX_RESPONSE_BYTES:
         raise ValueError("DeepSeek response exceeds the fixed size limit")
     return response_event_stream(raw)

@@ -1,8 +1,10 @@
 import json
+import http.client
 from pathlib import Path
 import subprocess
 import sys
 import unittest
+import urllib.error
 
 from cofactor_bench.deepseek_adapter import (
     API_ENDPOINT,
@@ -167,6 +169,29 @@ class DeepSeekAdapterContractTests(unittest.TestCase):
         self.assertNotIn(secret, stream)
         self.assertEqual(parse_codex_stdout(stream).thread_id, "response-123")
 
+    def test_incomplete_chunked_response_becomes_a_network_error(self) -> None:
+        class IncompleteResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _size):
+                raise http.client.IncompleteRead(b"")
+
+        class FakeOpener:
+            def open(self, _request, *, timeout):
+                self.timeout = timeout
+                return IncompleteResponse()
+
+        with self.assertRaises(urllib.error.URLError):
+            perform_request(
+                "return json",
+                "test-only-secret-value",
+                opener=FakeOpener(),
+            )
+
     def test_standalone_cli_identifies_itself_and_emulates_feature_preflight(self) -> None:
         script = Path(__file__).parents[1] / "cofactor_bench" / "deepseek_adapter.py"
         version = subprocess.run(
@@ -192,7 +217,7 @@ class DeepSeekAdapterContractTests(unittest.TestCase):
         )
 
         self.assertEqual(version.returncode, 0)
-        self.assertEqual(version.stdout.strip(), "cofactor9.1-deepseek-adapter 1.1.0")
+        self.assertEqual(version.stdout.strip(), "cofactor9.1-deepseek-adapter 1.2.0")
         self.assertEqual(features.returncode, 0)
         self.assertEqual(
             features.stdout.splitlines(),

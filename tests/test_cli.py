@@ -644,7 +644,21 @@ class RunOrchestrationTests(unittest.TestCase):
         self.config["run"]["transport"] = "deepseek_official_api"
         self._write_config()
 
-        summary = self._execute(run_id="full-deepseek-v4-flash-no-thinking-v1")
+        run_id = "full-deepseek-v4-flash-no-thinking-v1"
+        summary = self._execute(
+            run_id=run_id,
+            invocation_argv=(
+                sys.executable,
+                "-m",
+                "cofactor_bench.cli",
+                "run",
+                "--config",
+                str(self.config_path),
+                "--run-id",
+                run_id,
+                "--deepseek-api-key-stdin",
+            ),
+        )
 
         manifest = json.loads(
             (
