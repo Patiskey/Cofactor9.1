@@ -48,8 +48,12 @@ A conservative derived view for conventional exact classification. A record is
 eligible only if it has one experimental label and one label across all
 cofactor annotations, uses a leaf target term, matches the supplied sequence
 scope, has no unknown `X`, has no unresolved note-semantic risk, and is the
-representative of a non-conflicting exact-sequence group. `U` is retained as
-valid selenocysteine.
+representative of a non-conflicting exact-sequence group. Representative
+selection happens after the accession-local quality predicates: among eligible
+members of one exact-sequence entity, choose the lexicographically first
+accession. Thus an ineligible accession can never suppress a clean identical
+sequence merely because its accession sorts first. `U` is retained as valid
+selenocysteine.
 
 `single_clean` is the structural checkpoint before these extra exclusions:
 3,971 accessions, 3,942 exact-sequence entities and 64 represented labels. The
