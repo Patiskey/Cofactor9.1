@@ -28,6 +28,7 @@ from .deepseek_adapter import (
     MODEL as DEEPSEEK_MODEL,
     REASONING_EFFORT as DEEPSEEK_REASONING_EFFORT,
     SERVICE_TIER as DEEPSEEK_SERVICE_TIER,
+    THINKING_TYPE as DEEPSEEK_THINKING_TYPE,
 )
 from .metrics import CalibrationObservation, score_calibration
 from .prediction import Prediction, PredictionValidationError, validate_prediction
@@ -881,7 +882,7 @@ def _validate_verified_snapshot(
             "provider": "deepseek-official",
             "endpoint": DEEPSEEK_API_ENDPOINT,
             "max_output_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,
-            "thinking": {"type": "enabled"},
+            "thinking": {"type": DEEPSEEK_THINKING_TYPE},
             "response_format": {"type": "json_object"},
             "credential_environment_name": "DEEPSEEK_API_KEY",
             "internal_http_retries": 0,

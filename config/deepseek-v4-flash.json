@@ -97,7 +97,7 @@
   },
   "model": {
     "name": "deepseek-v4-flash",
-    "reasoning_effort": "high",
+    "reasoning_effort": "none",
     "service_tier": "default",
     "prompt_version": "cofactor9.1.sequence-only.named-catalog.v2",
     "response_schema_version": "cofactor9.1.response.v2"

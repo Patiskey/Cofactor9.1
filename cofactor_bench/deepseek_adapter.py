@@ -23,10 +23,11 @@ import urllib.request
 
 API_ENDPOINT = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-v4-flash"
-REASONING_EFFORT = "high"
+REASONING_EFFORT = "none"
 SERVICE_TIER = "default"
-MAX_OUTPUT_TOKENS = 16_384
-ADAPTER_VERSION = "cofactor9.1-deepseek-adapter 1.0.0"
+THINKING_TYPE = "disabled"
+MAX_OUTPUT_TOKENS = 2_048
+ADAPTER_VERSION = "cofactor9.1-deepseek-adapter 1.1.0"
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 600.0
 
@@ -66,8 +67,7 @@ def build_request_body(prompt: str) -> bytes:
     value = {
         "model": MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "thinking": {"type": "enabled"},
-        "reasoning_effort": REASONING_EFFORT,
+        "thinking": {"type": THINKING_TYPE},
         "response_format": {"type": "json_object"},
         "max_tokens": MAX_OUTPUT_TOKENS,
         "stream": False,
@@ -303,6 +303,7 @@ __all__ = [
     "MODEL",
     "REASONING_EFFORT",
     "SERVICE_TIER",
+    "THINKING_TYPE",
     "build_request_body",
     "error_event",
     "main",

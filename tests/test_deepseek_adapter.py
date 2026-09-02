@@ -16,7 +16,7 @@ from cofactor_bench.runner import parse_codex_stdout
 
 
 class DeepSeekAdapterContractTests(unittest.TestCase):
-    def test_request_is_fixed_to_official_flash_json_thinking_contract(self) -> None:
+    def test_request_is_fixed_to_official_flash_json_nonthinking_contract(self) -> None:
         body = json.loads(build_request_body("return json for this sequence"))
 
         self.assertEqual(API_ENDPOINT, "https://api.deepseek.com/chat/completions")
@@ -27,14 +27,13 @@ class DeepSeekAdapterContractTests(unittest.TestCase):
                 "messages": [
                     {"role": "user", "content": "return json for this sequence"}
                 ],
-                "thinking": {"type": "enabled"},
-                "reasoning_effort": "high",
+                "thinking": {"type": "disabled"},
                 "response_format": {"type": "json_object"},
                 "max_tokens": MAX_OUTPUT_TOKENS,
                 "stream": False,
             },
         )
-        self.assertEqual(MAX_OUTPUT_TOKENS, 16_384)
+        self.assertEqual(MAX_OUTPUT_TOKENS, 2_048)
 
     def test_response_is_preserved_and_adapted_to_strict_replay_stream(self) -> None:
         prediction = {
@@ -193,7 +192,7 @@ class DeepSeekAdapterContractTests(unittest.TestCase):
         )
 
         self.assertEqual(version.returncode, 0)
-        self.assertEqual(version.stdout.strip(), "cofactor9.1-deepseek-adapter 1.0.0")
+        self.assertEqual(version.stdout.strip(), "cofactor9.1-deepseek-adapter 1.1.0")
         self.assertEqual(features.returncode, 0)
         self.assertEqual(
             features.stdout.splitlines(),

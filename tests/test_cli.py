@@ -636,7 +636,7 @@ class RunOrchestrationTests(unittest.TestCase):
     def test_deepseek_transport_freezes_provider_and_runner_settings(self) -> None:
         self.config["model"] = {
             "name": "deepseek-v4-flash",
-            "reasoning_effort": "high",
+            "reasoning_effort": "none",
             "service_tier": "default",
             "prompt_version": "cofactor9.1.sequence-only.named-catalog.v2",
             "response_schema_version": "cofactor9.1.response.v2",
@@ -644,7 +644,7 @@ class RunOrchestrationTests(unittest.TestCase):
         self.config["run"]["transport"] = "deepseek_official_api"
         self._write_config()
 
-        summary = self._execute(run_id="full-deepseek-v4-flash-high-v1")
+        summary = self._execute(run_id="full-deepseek-v4-flash-no-thinking-v1")
 
         manifest = json.loads(
             (
@@ -669,7 +669,8 @@ class RunOrchestrationTests(unittest.TestCase):
         runner = _RecordingRunner.instances[-1]
         settings = runner.kwargs["model_settings"]
         self.assertEqual(settings.model, "deepseek-v4-flash")
-        self.assertEqual(settings.reasoning_effort, "high")
+        self.assertEqual(settings.reasoning_effort, "none")
+        self.assertEqual(contract["transport"]["thinking"], {"type": "disabled"})
         self.assertEqual(settings.service_tier, "default")
         self.assertEqual(
             runner.kwargs["credential_environment_name"], "DEEPSEEK_API_KEY"

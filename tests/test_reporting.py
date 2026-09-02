@@ -1221,7 +1221,7 @@ class ReportingValidationTests(ReportingFixture):
     def test_deepseek_runtime_contract_is_scored_from_the_frozen_manifest(self) -> None:
         model = {
             "name": "deepseek-v4-flash",
-            "reasoning_effort": "high",
+            "reasoning_effort": "none",
             "service_tier": "default",
             "prompt_version": "cofactor9.1.sequence-only.named-catalog.v2",
             "response_schema_version": "cofactor9.1.response.v2",
@@ -1233,7 +1233,7 @@ class ReportingValidationTests(ReportingFixture):
                 "provider": "deepseek-official",
                 "endpoint": API_ENDPOINT,
                 "max_output_tokens": MAX_OUTPUT_TOKENS,
-                "thinking": {"type": "enabled"},
+                "thinking": {"type": "disabled"},
                 "response_format": {"type": "json_object"},
                 "credential_environment_name": "DEEPSEEK_API_KEY",
                 "internal_http_retries": 0,
