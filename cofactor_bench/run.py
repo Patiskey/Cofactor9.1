@@ -37,6 +37,13 @@ from .cases import (
 )
 from .prediction import SCHEMA_VERSION as RESPONSE_SCHEMA_VERSION, parse_prediction_json
 from .prompt import PROMPT_VERSION, PromptCase, render_prompt
+from .deepseek_adapter import (
+    API_ENDPOINT as DEEPSEEK_API_ENDPOINT,
+    MAX_OUTPUT_TOKENS as DEEPSEEK_MAX_OUTPUT_TOKENS,
+    MODEL as DEEPSEEK_MODEL,
+    REASONING_EFFORT as DEEPSEEK_REASONING_EFFORT,
+    SERVICE_TIER as DEEPSEEK_SERVICE_TIER,
+)
 from .runner import (
     DEFAULT_CIRCUIT_BREAKER_THRESHOLD,
     DISABLED_FEATURES,
@@ -44,6 +51,7 @@ from .runner import (
     MAX_CONCURRENCY,
     MODEL,
     REASONING_EFFORT,
+    RunnerModelSettings,
     SERVICE_TIER,
     SYSTEMATIC_FAILURE_CODES,
     CodexExecRunner,
@@ -893,12 +901,24 @@ def _load_inputs(config_path: str | Path) -> _RunInputs:
     )
 
 
-def _validate_fixed_model_contract(config: Mapping[str, Any]) -> None:
+def _runner_model_settings(config: Mapping[str, Any]) -> RunnerModelSettings:
+    run = _required_mapping(config, "run", location="benchmark config")
+    transport = _required_string(run, "transport", location="benchmark config.run")
     model = _required_mapping(config, "model", location="benchmark config")
+    if transport == "codex_cli_chatgpt_oauth":
+        expected_runtime = (MODEL, REASONING_EFFORT, SERVICE_TIER)
+    elif transport == "deepseek_official_api":
+        expected_runtime = (
+            DEEPSEEK_MODEL,
+            DEEPSEEK_REASONING_EFFORT,
+            DEEPSEEK_SERVICE_TIER,
+        )
+    else:
+        raise RunContractError("benchmark config run.transport is unsupported")
     expected = {
-        "name": MODEL,
-        "reasoning_effort": REASONING_EFFORT,
-        "service_tier": SERVICE_TIER,
+        "name": expected_runtime[0],
+        "reasoning_effort": expected_runtime[1],
+        "service_tier": expected_runtime[2],
         "prompt_version": PROMPT_VERSION,
         "response_schema_version": RESPONSE_SCHEMA_VERSION,
     }
@@ -907,6 +927,30 @@ def _validate_fixed_model_contract(config: Mapping[str, Any]) -> None:
             raise RunContractError(
                 f"benchmark config model.{key} must be {expected_value!r}"
             )
+    return RunnerModelSettings(
+        model=expected_runtime[0],
+        reasoning_effort=expected_runtime[1],
+        service_tier=expected_runtime[2],
+    )
+
+
+def _validate_fixed_model_contract(config: Mapping[str, Any]) -> None:
+    _runner_model_settings(config)
+
+
+def _contract_model_settings(
+    contract: Mapping[str, Any],
+) -> RunnerModelSettings:
+    model = _required_mapping(contract, "model", location="run manifest.contract")
+    return RunnerModelSettings(
+        model=_required_string(model, "name", location="run manifest model"),
+        reasoning_effort=_required_string(
+            model, "reasoning_effort", location="run manifest model"
+        ),
+        service_tier=_required_string(
+            model, "service_tier", location="run manifest model"
+        ),
+    )
 
 
 def _configured_run_settings(
@@ -918,7 +962,10 @@ def _configured_run_settings(
 ) -> tuple[int, int, float, int, str]:
     run = _required_mapping(config, "run", location="benchmark config")
     transport = _required_string(run, "transport", location="benchmark config.run")
-    if transport != "codex_cli_chatgpt_oauth":
+    if transport not in {
+        "codex_cli_chatgpt_oauth",
+        "deepseek_official_api",
+    }:
         raise RunContractError("benchmark config run.transport is unsupported")
     max_attempts = _required_int(
         run, "max_attempts", location="benchmark config.run"
@@ -1345,6 +1392,7 @@ def _make_contract(
     import cofactor_bench.scoring as scoring_module
 
     model = _required_mapping(inputs.config, "model", location="benchmark config")
+    model_settings = _runner_model_settings(inputs.config)
     case_manifest = _decode_json_object(
         inputs.cases_manifest_bytes,
         location="case artifact manifest",
@@ -1468,12 +1516,25 @@ def _make_contract(
             "circuit_breaker_threshold": circuit_breaker_threshold,
             "systematic_failure_codes": sorted(SYSTEMATIC_FAILURE_CODES),
             "model_settings": {
-                "model": MODEL,
-                "reasoning_effort": REASONING_EFFORT,
-                "service_tier": SERVICE_TIER,
+                "model": model_settings.model,
+                "reasoning_effort": model_settings.reasoning_effort,
+                "service_tier": model_settings.service_tier,
                 "output_schema": FROZEN_RESPONSE_SCHEMA_NAME,
                 "tools_disabled": list(DISABLED_FEATURES),
             },
+            **(
+                {
+                    "provider": "deepseek-official",
+                    "endpoint": DEEPSEEK_API_ENDPOINT,
+                    "max_output_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,
+                    "thinking": {"type": "enabled"},
+                    "response_format": {"type": "json_object"},
+                    "credential_environment_name": "DEEPSEEK_API_KEY",
+                    "internal_http_retries": 0,
+                }
+                if transport == "deepseek_official_api"
+                else {}
+            ),
         },
         "execution": {
             "concurrency": concurrency,
@@ -1685,6 +1746,7 @@ def _invocation_common(
 ) -> dict[str, object]:
     transport = _required_mapping(contract, "transport", location="run manifest.contract")
     execution = _required_mapping(contract, "execution", location="run manifest.contract")
+    model = _contract_model_settings(contract)
     return {
         "invocation_number": number,
         "run_id": run_id,
@@ -1695,9 +1757,9 @@ def _invocation_common(
         "limit": limit,
         "infrastructure_gate": infrastructure_gate,
         "scheduling": {
-            "model": MODEL,
-            "reasoning_effort": REASONING_EFFORT,
-            "service_tier": SERVICE_TIER,
+            "model": model.model,
+            "reasoning_effort": model.reasoning_effort,
+            "service_tier": model.service_tier,
             "concurrency": execution.get("concurrency"),
             "max_attempts": transport.get("max_attempts"),
             "timeout_seconds": transport.get("timeout_seconds"),
@@ -2253,10 +2315,11 @@ def _validate_invocations(
             "execution",
             location="run manifest.contract",
         )
+        model = _contract_model_settings(manifest_contract)
         expected_scheduling = {
-            "model": MODEL,
-            "reasoning_effort": REASONING_EFFORT,
-            "service_tier": SERVICE_TIER,
+            "model": model.model,
+            "reasoning_effort": model.reasoning_effort,
+            "service_tier": model.service_tier,
             "concurrency": execution.get("concurrency"),
             "max_attempts": transport.get("max_attempts"),
             "timeout_seconds": transport.get("timeout_seconds"),
@@ -2820,6 +2883,10 @@ def _execute_locked_invocation(
 
     try:
         factory = CodexExecRunner if runner_factory is None else runner_factory
+        model_settings = _contract_model_settings(contract)
+        transport = _required_mapping(
+            contract, "transport", location="run manifest.contract"
+        )
         runner = factory(
             run_dir=run_dir,
             executable=frozen_codex_path,
@@ -2827,6 +2894,12 @@ def _execute_locked_invocation(
             max_attempts=max_attempts,
             timeout_seconds=effective_timeout,
             circuit_breaker_threshold=effective_breaker,
+            model_settings=model_settings,
+            credential_environment_name=(
+                "DEEPSEEK_API_KEY"
+                if transport.get("kind") == "deepseek_official_api"
+                else None
+            ),
         )
         runner.run_cases(
             selected_cases,
@@ -3125,6 +3198,7 @@ def _validate_attempt_ledger(
             executable=executable,
             schema_path=schema_path,
             working_directory=working_directory,
+            model_settings=_contract_model_settings(manifest_contract),
         )
         if argv != expected_argv:
             raise RunContractError(
@@ -3362,6 +3436,7 @@ def _validate_transport_incidents(
         raise RunContractError("run manifest frozen Codex path is invalid")
     executable = str(run_dir / FROZEN_CODEX_EXECUTABLE_NAME)
     schema_path = _validate_frozen_response_schema(run_dir, manifest_contract)
+    model_settings = _contract_model_settings(manifest_contract)
     result: dict[str, tuple[LedgerBundle, ...]] = {}
     for case_root in root.iterdir():
         if case_root.is_symlink() or not case_root.is_dir():
@@ -3444,9 +3519,9 @@ def _validate_transport_incidents(
                 "schema_version": TRANSPORT_INCIDENT_SCHEMA_VERSION,
                 "sample_id": case.sample_id,
                 "incident_number": number,
-                "model": MODEL,
-                "reasoning_effort": REASONING_EFFORT,
-                "service_tier": SERVICE_TIER,
+                "model": model_settings.model,
+                "reasoning_effort": model_settings.reasoning_effort,
+                "service_tier": model_settings.service_tier,
                 "environment_policy": "fixed-allowlist",
                 "prompt_sha256": _sha256(prompt_bytes),
                 "stdout_sha256": _sha256(stdout_bytes),
@@ -3607,6 +3682,7 @@ def _validate_transport_incidents(
                     executable=executable,
                     schema_path=schema_path,
                     working_directory=working_directory,
+                    model_settings=model_settings,
                 )
                 if argv != expected_argv:
                     raise RunContractError(
@@ -3913,7 +3989,11 @@ def _inspect_terminals(
                 f"terminal {case.sample_id} prompt differs from public case"
             )
         try:
-            terminal = _load_terminal(terminal_path, case)
+            terminal = _load_terminal(
+                terminal_path,
+                case,
+                model_settings=_contract_model_settings(manifest_contract),
+            )
         except Exception as error:
             raise RunContractError(
                 f"terminal {case.sample_id} is unreadable: {error}"

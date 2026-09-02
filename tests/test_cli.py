@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 from cofactor_bench import cli
 from cofactor_bench import run as run_module
+from cofactor_bench.deepseek_adapter import API_ENDPOINT, MAX_OUTPUT_TOKENS
 from cofactor_bench.prediction import Prediction
 from cofactor_bench.prompt import CatalogTerm, create_prompt_case, render_prompt
 from cofactor_bench.run import (
@@ -73,6 +74,7 @@ class _RecordingRunner:
     ) -> tuple[TerminalResult, ...]:
         sample_ids = tuple(case.sample_id for case in cases)
         self.calls.append((sample_ids, resume, concurrency))
+        model_settings = self.kwargs["model_settings"]
         results: list[TerminalResult] = []
         for case in cases:
             prediction = Prediction(
@@ -98,9 +100,9 @@ class _RecordingRunner:
                 "error_code": None,
                 "error_message": None,
                 "completed_at": "2026-09-02T00:00:00Z",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "max",
-                "service_tier": "fast",
+                "model": model_settings.model,
+                "reasoning_effort": model_settings.reasoning_effort,
+                "service_tier": model_settings.service_tier,
                 "prompt_version": "cofactor9.1.sequence-only.named-catalog.v2",
                 "catalog_version": case.catalog_version,
                 "prompt_sha256": hashlib.sha256(
@@ -159,10 +161,11 @@ class _RecordingRunner:
                             working_directory=Path(
                                 "/private/tmp/cofactor9.1-attempt-test"
                             ),
+                            model_settings=model_settings,
                         ),
-                        "model": "gpt-5.6-sol",
-                        "reasoning_effort": "max",
-                        "service_tier": "fast",
+                        "model": model_settings.model,
+                        "reasoning_effort": model_settings.reasoning_effort,
+                        "service_tier": model_settings.service_tier,
                         "returncode": 0,
                         "timed_out": False,
                         "error_code": None,
@@ -629,6 +632,48 @@ class RunOrchestrationTests(unittest.TestCase):
         self.assertEqual(private_contract["visibility"], "private-hash-only")
         self.assertNotIn("content", private_contract)
         self.assertEqual(private_contract["record_count"], 3)
+
+    def test_deepseek_transport_freezes_provider_and_runner_settings(self) -> None:
+        self.config["model"] = {
+            "name": "deepseek-v4-flash",
+            "reasoning_effort": "high",
+            "service_tier": "default",
+            "prompt_version": "cofactor9.1.sequence-only.named-catalog.v2",
+            "response_schema_version": "cofactor9.1.response.v2",
+        }
+        self.config["run"]["transport"] = "deepseek_official_api"
+        self._write_config()
+
+        summary = self._execute(run_id="full-deepseek-v4-flash-high-v1")
+
+        manifest = json.loads(
+            (
+                self.root
+                / "runs"
+                / summary.run_id
+                / "manifest.json"
+            ).read_text()
+        )
+        contract = manifest["contract"]
+        self.assertEqual(contract["model"], self.config["model"])
+        self.assertEqual(contract["transport"]["kind"], "deepseek_official_api")
+        self.assertEqual(contract["transport"]["provider"], "deepseek-official")
+        self.assertEqual(contract["transport"]["endpoint"], API_ENDPOINT)
+        self.assertEqual(
+            contract["transport"]["max_output_tokens"], MAX_OUTPUT_TOKENS
+        )
+        self.assertEqual(
+            contract["transport"]["credential_environment_name"],
+            "DEEPSEEK_API_KEY",
+        )
+        runner = _RecordingRunner.instances[-1]
+        settings = runner.kwargs["model_settings"]
+        self.assertEqual(settings.model, "deepseek-v4-flash")
+        self.assertEqual(settings.reasoning_effort, "high")
+        self.assertEqual(settings.service_tier, "default")
+        self.assertEqual(
+            runner.kwargs["credential_environment_name"], "DEEPSEEK_API_KEY"
+        )
 
     def test_new_run_refuses_any_preexisting_run_directory(self) -> None:
         (self.root / "runs" / "full-gpt56sol-max-fast-v1").mkdir(parents=True)
