@@ -248,6 +248,97 @@ class CaseValidationTests(unittest.TestCase):
             second.manifest["input_sha256"]["full_structured"],
         )
 
+    def test_unique_sequence_accession_rename_does_not_change_public_cases(self) -> None:
+        rows = _fixture_rows()
+        catalog_bytes = _json_bytes(_fixture_catalog())
+        original = derive_case_artifacts(
+            _jsonl_bytes(rows),
+            catalog_bytes,
+            expected_case_count=3,
+        )
+        rows[1]["entry"]["accession"] = "Q99999"
+        renamed = derive_case_artifacts(
+            _jsonl_bytes(rows),
+            catalog_bytes,
+            expected_case_count=3,
+        )
+
+        self.assertEqual(original.cases_jsonl, renamed.cases_jsonl)
+        self.assertEqual(
+            [case.sample_id for case in original.cases],
+            [case.sample_id for case in renamed.cases],
+        )
+        self.assertNotEqual(
+            original.private_mapping_jsonl,
+            renamed.private_mapping_jsonl,
+        )
+
+    def test_exact_sequence_accessions_do_not_affect_public_cases(self) -> None:
+        rows = _fixture_rows()
+        rows[1]["sequence"] = dict(rows[0]["sequence"])
+        catalog_bytes = _json_bytes(_fixture_catalog())
+        original = derive_case_artifacts(
+            _jsonl_bytes(rows),
+            catalog_bytes,
+            expected_case_count=3,
+        )
+
+        renamed_rows = json.loads(json.dumps(rows))
+        renamed_rows[0]["entry"]["accession"] = "Q99998"
+        renamed = derive_case_artifacts(
+            _jsonl_bytes(renamed_rows),
+            catalog_bytes,
+            expected_case_count=3,
+        )
+        swapped_rows = json.loads(json.dumps(rows))
+        swapped_rows[0]["entry"]["accession"], swapped_rows[1]["entry"][
+            "accession"
+        ] = (
+            swapped_rows[1]["entry"]["accession"],
+            swapped_rows[0]["entry"]["accession"],
+        )
+        swapped = derive_case_artifacts(
+            _jsonl_bytes(swapped_rows),
+            catalog_bytes,
+            expected_case_count=3,
+        )
+
+        self.assertEqual(original.cases_jsonl, renamed.cases_jsonl)
+        self.assertEqual(original.cases_jsonl, swapped.cases_jsonl)
+        self.assertNotEqual(
+            original.private_mapping_jsonl,
+            renamed.private_mapping_jsonl,
+        )
+
+    def test_manifest_declares_sequence_only_sha256_id_derivation(self) -> None:
+        full_bytes, catalog_bytes = _fixture_inputs()
+        artifacts = derive_case_artifacts(
+            full_bytes,
+            catalog_bytes,
+            expected_case_count=3,
+        )
+
+        self.assertEqual(
+            artifacts.manifest["id_derivation"],
+            {
+                "algorithm": "SHA-256",
+                "digest_hex_characters": 32,
+                "domain": "cofactor9.1.sequence-case-id.v2",
+                "inputs": [
+                    "sequence_sha256",
+                    "exact_sequence_duplicate_ordinal",
+                ],
+                "ordinal_base": 0,
+                "version": "cofactor9.1.sequence-case-id.v2",
+            },
+        )
+        derivation_json = json.dumps(
+            artifacts.manifest["id_derivation"],
+            sort_keys=True,
+        ).casefold()
+        self.assertNotIn("hmac", derivation_json)
+        self.assertNotIn("accession", derivation_json)
+
     def test_strict_loader_rejects_a_leaked_accession_field(self) -> None:
         full_bytes, catalog_bytes = _fixture_inputs()
         artifacts = derive_case_artifacts(

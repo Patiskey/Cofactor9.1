@@ -25,7 +25,7 @@ VIEW_RECORD_SCHEMA_VERSION = "cofactor9.1.view-record.v1"
 LABEL_CATALOG_SCHEMA_VERSION = "cofactor9.1.label-catalog.v1"
 ONTOLOGY_AUDIT_SCHEMA_VERSION = "cofactor9.1.ontology-audit.v1"
 VIEW_AUDIT_SCHEMA_VERSION = "cofactor9.1.view-audit.v1"
-RULE_VERSION = "cofactor9.1.views.v2"
+RULE_VERSION = "cofactor9.1.views.v3"
 CATALOG_VERSION = "cofactor9.1.allowed-labels.v1"
 
 _CHEBI_ID = re.compile(r"CHEBI:([1-9][0-9]*)\Z")
@@ -58,6 +58,7 @@ _CHALLENGE_REASON_CODES = frozenset(
         "PURE_OR_FORMULA",
         "PURE_AND_FORMULA",
         "MIXED_AND_OR_FORMULA",
+        "OVERLAPPING_BLOCK_LABEL",
         "DUPLICATE_EXPERIMENTAL_LABEL_OCCURRENCE",
         "ONTOLOGY_ANCESTOR_TARGET",
         "MOLECULE_SCOPE",
@@ -84,6 +85,9 @@ _FROZEN_EXPECTED = {
     "duplicate_entries": 81,
     "conflict_groups": 6,
     "conflict_entries": 12,
+    "canonical_block_count": 5911,
+    "canonical_block_label_overlap_count": 8,
+    "overlapping_block_label_accession_count": 6,
     "note_pending_single_clean": 477,
     "label_count": 104,
     "frequency_band_counts": {"head": 14, "mid": 20, "tail": 70},
@@ -128,6 +132,9 @@ class ViewBuildSummary:
     duplicate_entries: int
     conflict_groups: int
     conflict_entries: int
+    canonical_block_count: int
+    canonical_block_label_overlap_count: int
+    overlapping_block_label_accession_count: int
     note_pending_single_clean: int
     label_count: int
     frequency_band_counts: dict[str, int]
@@ -152,6 +159,13 @@ class ViewBuildSummary:
             "duplicate_entries": self.duplicate_entries,
             "conflict_groups": self.conflict_groups,
             "conflict_entries": self.conflict_entries,
+            "canonical_block_count": self.canonical_block_count,
+            "canonical_block_label_overlap_count": (
+                self.canonical_block_label_overlap_count
+            ),
+            "overlapping_block_label_accession_count": (
+                self.overlapping_block_label_accession_count
+            ),
             "note_pending_single_clean": self.note_pending_single_clean,
             "label_count": self.label_count,
             "frequency_band_counts": self.frequency_band_counts,
@@ -274,6 +288,48 @@ def _label_ids(record: Mapping[str, Any], field: str) -> tuple[str, ...]:
             f"Master record {_entry_accession(record)!r} has invalid {field}"
         )
     return tuple(value)
+
+
+def _gold_formula(record: Mapping[str, Any]) -> tuple[tuple[str, ...], ...]:
+    value = _derived(record).get("gold_formula")
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(
+            f"Master record {_entry_accession(record)!r} has invalid gold_formula"
+        )
+    formula: list[tuple[str, ...]] = []
+    for block in value:
+        if (
+            not isinstance(block, Sequence)
+            or isinstance(block, (str, bytes))
+            or not block
+            or not all(isinstance(label, str) for label in block)
+        ):
+            raise ValueError(
+                f"Master record {_entry_accession(record)!r} has invalid gold_formula"
+            )
+        labels = tuple(block)
+        if len(labels) != len(set(labels)):
+            raise ValueError(
+                f"Master record {_entry_accession(record)!r} repeats a label "
+                "within a gold_formula block"
+            )
+        formula.append(labels)
+    formula_union = {label for block in formula for label in block}
+    if formula_union != set(_label_ids(record, "experimental_label_ids")):
+        raise ValueError(
+            f"Master record {_entry_accession(record)!r} gold_formula label union "
+            "differs from experimental_label_ids"
+        )
+    return tuple(formula)
+
+
+def _formula_overlap_count(formula: Sequence[Sequence[str]]) -> int:
+    blocks = [set(block) for block in formula]
+    return sum(
+        bool(left & right)
+        for index, left in enumerate(blocks)
+        for right in blocks[index + 1 :]
+    )
 
 
 def _blocks(record: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
@@ -748,11 +804,14 @@ def _enrich_records(
         formula_shape = derived.get("formula_shape")
         if not isinstance(formula_shape, str):
             raise ValueError(f"Record {accession!r} lacks formula_shape")
+        formula = _gold_formula(record)
 
         reasons = set(derived.get("reason_codes", []))
         formula_reason = _FORMULA_REASON.get(formula_shape)
         if formula_reason:
             reasons.add(formula_reason)
+        if _formula_overlap_count(formula):
+            reasons.add("OVERLAPPING_BLOCK_LABEL")
         if set(all_ids) != set(experimental_ids):
             reasons.add("EXTRA_NONEXPERIMENTAL_LABEL")
         evidence_status = derived.get("evidence_status")
@@ -931,6 +990,29 @@ def derive_view_artifacts(
         )
         raise ValueError("Duplicate Master accessions: " + ", ".join(duplicates))
 
+    formulas = {
+        _entry_accession(record): _gold_formula(record)
+        for record in ordered_records
+    }
+    formula_overlap_counts = {
+        accession: _formula_overlap_count(formula)
+        for accession, formula in formulas.items()
+    }
+    formula_audit = {
+        "canonical_block_count": sum(len(formula) for formula in formulas.values()),
+        "canonical_block_label_overlap_count": sum(
+            formula_overlap_counts.values()
+        ),
+        "overlapping_block_label_accession_count": sum(
+            bool(count) for count in formula_overlap_counts.values()
+        ),
+        "overlapping_block_label_accessions": sorted(
+            accession
+            for accession, count in formula_overlap_counts.items()
+            if count
+        ),
+    }
+
     target_ids = sorted(
         {
             label_id
@@ -1071,11 +1153,20 @@ def derive_view_artifacts(
             "core_provisional_accessions": len(core_rows),
             "ambiguity_challenge_accessions": len(challenge_rows),
             "note_pending_single_clean": note_pending_single_clean,
+            "formula": {
+                key: formula_audit[key]
+                for key in (
+                    "canonical_block_count",
+                    "canonical_block_label_overlap_count",
+                    "overlapping_block_label_accession_count",
+                )
+            },
             "ontology": ontology_audit["summary"],
             "exact_sequence": exact_sequences["summary"],
             "label_catalog": label_catalog["summary"],
         },
         "diagnostic_counts": diagnostics,
+        "formula_audit": formula_audit,
         "core_predicate_audit": core_predicate_audit,
         "reason_code_accession_counts": dict(sorted(reason_counts.items())),
         "challenge_reason_accession_counts": dict(
@@ -1120,6 +1211,7 @@ def _summary_from_artifacts(
     ontology = summary["ontology"]
     exact = summary["exact_sequence"]
     catalog = summary["label_catalog"]
+    formula = summary["formula"]
     return ViewBuildSummary(
         full_structured_accessions=summary["full_structured_accessions"],
         single_clean_accessions=summary["single_clean_accessions"],
@@ -1138,6 +1230,13 @@ def _summary_from_artifacts(
         duplicate_entries=exact["duplicate_entries"],
         conflict_groups=exact["conflict_groups"],
         conflict_entries=exact["conflict_entries"],
+        canonical_block_count=formula["canonical_block_count"],
+        canonical_block_label_overlap_count=formula[
+            "canonical_block_label_overlap_count"
+        ],
+        overlapping_block_label_accession_count=formula[
+            "overlapping_block_label_accession_count"
+        ],
         note_pending_single_clean=summary["note_pending_single_clean"],
         label_count=catalog["label_count"],
         frequency_band_counts=dict(catalog["frequency_band_counts"]),
@@ -1170,6 +1269,7 @@ def _render_report(
     ontology = summary["ontology"]
     exact = summary["exact_sequence"]
     catalog = summary["label_catalog"]
+    formula = summary["formula"]
     chebi_names = artifacts.label_catalog["chebi_name_audit"]
     uniprot_names = artifacts.label_catalog["uniprot_display_name_audit"]
     diagnostics = artifacts.view_audit["diagnostic_counts"]
@@ -1214,6 +1314,13 @@ def _render_report(
         f"- Core-Provisional accessions: {summary['core_provisional_accessions']}\n"
         f"- Ambiguity-Challenge accessions: "
         f"{summary['ambiguity_challenge_accessions']}\n\n"
+        "## Gold formula checkpoints\n\n"
+        f"- Preserved non-empty cofactor blocks: "
+        f"{formula['canonical_block_count']}\n"
+        f"- Overlapping block pairs: "
+        f"{formula['canonical_block_label_overlap_count']}\n"
+        f"- Accessions with a label repeated across blocks: "
+        f"{formula['overlapping_block_label_accession_count']}\n\n"
         "## Ontology checkpoints\n\n"
         f"- Target ancestor pairs: {ontology['ancestor_pair_count']}\n"
         f"- Terms in overlap: {ontology['overlap_term_count']}\n"

@@ -268,17 +268,78 @@ class UniProtParserTests(unittest.TestCase):
         self.assertEqual(parsed.formula_shape, FormulaShape.MIXED_AND_OR)
         self.assertEqual(parsed.evidence_status, EvidenceStatus.MIXED_DIRECT_AND_REFERENCE)
 
-    def test_canonical_formula_deduplicates_and_applies_cnf_absorption(self) -> None:
+    def test_canonical_formula_deduplicates_only_within_each_block(self) -> None:
         formula = canonicalize_formula(
             [
                 ["CHEBI:10", "CHEBI:2", "CHEBI:2"],
                 ["CHEBI:2", "CHEBI:10"],
+            ]
+        )
+
+        self.assertEqual(
+            formula,
+            (
+                ("CHEBI:2", "CHEBI:10"),
+                ("CHEBI:2", "CHEBI:10"),
+            ),
+        )
+
+    def test_canonical_formula_preserves_subset_and_superset_blocks(self) -> None:
+        formula = canonicalize_formula(
+            [
+                ["CHEBI:10", "CHEBI:2"],
                 ["CHEBI:2"],
                 ["CHEBI:3"],
             ]
         )
 
-        self.assertEqual(formula, (("CHEBI:2",), ("CHEBI:3",)))
+        self.assertEqual(
+            formula,
+            (("CHEBI:2",), ("CHEBI:2", "CHEBI:10"), ("CHEBI:3",)),
+        )
+
+    def test_repeated_single_label_blocks_keep_and_shape(self) -> None:
+        evidence = [
+            {
+                "evidenceCode": "ECO:0000269",
+                "source": "PubMed",
+                "id": "12345678",
+            }
+        ]
+        entry = {
+            "primaryAccession": "P00002",
+            "comments": [
+                {
+                    "commentType": "COFACTOR",
+                    "cofactors": [
+                        {
+                            "cofactorCrossReference": {
+                                "database": "ChEBI",
+                                "id": "CHEBI:42",
+                            },
+                            "evidences": evidence,
+                        }
+                    ],
+                },
+                {
+                    "commentType": "COFACTOR",
+                    "cofactors": [
+                        {
+                            "cofactorCrossReference": {
+                                "database": "ChEBI",
+                                "id": "CHEBI:42",
+                            },
+                            "evidences": evidence,
+                        }
+                    ],
+                },
+            ],
+        }
+
+        parsed = parse_uniprot_entry(entry, raw_record_index=0)
+
+        self.assertEqual(parsed.gold_formula, (("CHEBI:42",), ("CHEBI:42",)))
+        self.assertEqual(parsed.formula_shape, FormulaShape.PURE_AND)
 
 
 if __name__ == "__main__":

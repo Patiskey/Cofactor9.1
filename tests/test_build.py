@@ -320,6 +320,10 @@ class SyntheticBuildTests(unittest.TestCase):
                 verified_generation["artifacts"]["master"]["record_count"],
                 2,
             )
+            self.assertEqual(
+                verified_generation["formula_rule_version"],
+                "cofactor9.1.formula.v2",
+            )
             with (project_root / "data/master.jsonl").open("a") as handle:
                 handle.write("{}\n")
             with self.assertRaisesRegex(ValueError, "SHA-256"):
@@ -414,6 +418,66 @@ class SyntheticBuildTests(unittest.TestCase):
             self.assertEqual(master_path.read_bytes(), first_master_bytes)
             self.assertEqual(audit_path.read_bytes(), first_audit_bytes)
 
+    def test_counts_cross_block_overlap_without_losing_formula_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            raw_path = root / "source.json.gz"
+            payload = _synthetic_payload()
+            direct_entry = payload["results"][1]
+            direct_entry["comments"].append(
+                {
+                    "commentType": "COFACTOR",
+                    "cofactors": [
+                        _cofactor(
+                            "CHEBI:1",
+                            {
+                                "evidenceCode": "ECO:0000269",
+                                "source": "PubMed",
+                                "id": "10000001",
+                            },
+                        )
+                    ],
+                }
+            )
+            with gzip.open(raw_path, "wt", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+            master_path = root / "master.jsonl"
+            summary = build_snapshot(
+                raw_path=raw_path,
+                master_path=master_path,
+                source_candidates_path=root / "source_candidates.jsonl",
+                dataset_version="Cofactor9.1-test",
+                source_metadata={
+                    "release": "test_release",
+                    "query": "synthetic:true",
+                    "artifact_sha256": hashlib.sha256(
+                        raw_path.read_bytes()
+                    ).hexdigest(),
+                },
+            )
+            rows = [json.loads(line) for line in master_path.read_text().splitlines()]
+
+        self.assertEqual(summary.canonical_block_count, 3)
+        self.assertEqual(summary.canonical_block_label_overlap_count, 1)
+        self.assertEqual(summary.canonical_block_label_overlap_accession_count, 1)
+        direct = next(row for row in rows if row["entry"]["accession"] == "A00001")
+        self.assertEqual(
+            direct["derived"]["gold_formula"],
+            [["CHEBI:1"], ["CHEBI:1"]],
+        )
+        self.assertEqual(
+            direct["derived"]["reason_codes"],
+            ["OVERLAPPING_BLOCK_LABEL"],
+        )
+        self.assertEqual(
+            {
+                label
+                for block in direct["derived"]["gold_formula"]
+                for label in block
+            },
+            set(direct["derived"]["experimental_label_ids"]),
+        )
+
 
 @unittest.skipUnless(
     FROZEN_UNIPROT.exists() and FROZEN_CHEBI.exists() and SOURCE_CONFIG.exists(),
@@ -458,6 +522,29 @@ class FrozenSnapshotBuildTests(unittest.TestCase):
                     ),
                 },
             )
+            union_mismatches = []
+            overlap_accessions = []
+            overlap_reason_accessions = []
+            with (root / "master.jsonl").open(encoding="utf-8") as handle:
+                for line in handle:
+                    row = json.loads(line)
+                    derived = row["derived"]
+                    formula_union = {
+                        label
+                        for block in derived["gold_formula"]
+                        for label in block
+                    }
+                    if formula_union != set(derived["experimental_label_ids"]):
+                        union_mismatches.append(row["entry"]["accession"])
+                    blocks = [set(block) for block in derived["gold_formula"]]
+                    if any(
+                        left & right
+                        for index, left in enumerate(blocks)
+                        for right in blocks[index + 1 :]
+                    ):
+                        overlap_accessions.append(row["entry"]["accession"])
+                    if "OVERLAPPING_BLOCK_LABEL" in derived["reason_codes"]:
+                        overlap_reason_accessions.append(row["entry"]["accession"])
 
         self.assertEqual(summary.source_record_count, 7008)
         self.assertEqual(summary.master_record_count, 5337)
@@ -483,17 +570,24 @@ class FrozenSnapshotBuildTests(unittest.TestCase):
         self.assertEqual(
             summary.formula_shape_counts,
             {
-                FormulaShape.SINGLE.value: 4179,
+                FormulaShape.SINGLE.value: 4178,
                 FormulaShape.PURE_OR.value: 647,
-                FormulaShape.PURE_AND.value: 448,
+                FormulaShape.PURE_AND.value: 449,
                 FormulaShape.MIXED_AND_OR.value: 63,
             },
         )
         self.assertEqual(summary.experimental_occurrence_count, 6981)
         self.assertEqual(summary.unique_accession_experimental_label_count, 6974)
         self.assertEqual(summary.duplicate_experimental_occurrence_count, 7)
-        self.assertEqual(summary.canonical_block_count, 5904)
-        self.assertEqual(summary.canonical_block_label_overlap_count, 0)
+        self.assertEqual(summary.canonical_block_count, 5911)
+        self.assertEqual(summary.canonical_block_label_overlap_count, 8)
+        self.assertEqual(summary.canonical_block_label_overlap_accession_count, 6)
+        self.assertEqual(union_mismatches, [])
+        self.assertEqual(
+            overlap_accessions,
+            ["P0ABJ9", "Q57580", "Q6AYK3", "Q8NFF5", "Q9LNJ9", "Q9SIY3"],
+        )
+        self.assertEqual(overlap_reason_accessions, overlap_accessions)
         self.assertEqual(summary.sequence_with_u_count, 11)
         self.assertEqual(summary.sequence_with_x_count, 8)
         self.assertEqual(summary.missing_sequence_count, 0)

@@ -20,6 +20,7 @@ from .parser import EXPERIMENTAL_EVIDENCE_CODE, parse_uniprot_entry
 
 MASTER_SCHEMA_VERSION = "cofactor9.1.master.v1"
 SOURCE_CANDIDATE_SCHEMA_VERSION = "cofactor9.1.source-candidate.v1"
+FORMULA_RULE_VERSION = "cofactor9.1.formula.v2"
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SOURCE_METADATA_FIELDS = frozenset(
@@ -55,6 +56,7 @@ class BuildSummary:
     duplicate_experimental_occurrence_count: int
     canonical_block_count: int
     canonical_block_label_overlap_count: int
+    canonical_block_label_overlap_accession_count: int
     sequence_with_u_count: int
     sequence_with_x_count: int
     missing_sequence_count: int
@@ -87,6 +89,9 @@ class BuildSummary:
             "canonical_block_count": self.canonical_block_count,
             "canonical_block_label_overlap_count": (
                 self.canonical_block_label_overlap_count
+            ),
+            "canonical_block_label_overlap_accession_count": (
+                self.canonical_block_label_overlap_accession_count
             ),
             "sequence_with_u_count": self.sequence_with_u_count,
             "sequence_with_x_count": self.sequence_with_x_count,
@@ -406,7 +411,11 @@ def _master_row(
             ),
             "experimental_occurrence_count": parsed.experimental_occurrence_count,
             "canonical_block_count": len(parsed.gold_formula),
-            "reason_codes": [],
+            "reason_codes": (
+                ["OVERLAPPING_BLOCK_LABEL"]
+                if _canonical_overlap_count(parsed)
+                else []
+            ),
             "memberships": ["MASTER_5337"],
         },
         "adjudication": {
@@ -668,6 +677,7 @@ def build_snapshot(
     unique_accession_label_count = 0
     canonical_block_count = 0
     canonical_overlap_count = 0
+    canonical_overlap_accession_count = 0
     sequence_with_u_count = 0
     sequence_with_x_count = 0
     missing_sequence_count = 0
@@ -691,6 +701,15 @@ def build_snapshot(
             if not parsed.eligible_for_master:
                 continue
 
+            formula_label_union = {
+                label for block in parsed.gold_formula for label in block
+            }
+            if formula_label_union != set(parsed.experimental_label_ids):
+                raise ValueError(
+                    "Gold formula label union differs from experimental labels for "
+                    f"{parsed.accession}"
+                )
+
             _write_json_line(
                 master_handle,
                 _master_row(
@@ -710,7 +729,9 @@ def build_snapshot(
             experimental_occurrence_count += parsed.experimental_occurrence_count
             unique_accession_label_count += len(parsed.experimental_label_ids)
             canonical_block_count += len(parsed.gold_formula)
-            canonical_overlap_count += _canonical_overlap_count(parsed)
+            accession_overlap_count = _canonical_overlap_count(parsed)
+            canonical_overlap_count += accession_overlap_count
+            canonical_overlap_accession_count += bool(accession_overlap_count)
             sequence = parsed.sequence_value
             sequence_with_u_count += bool(sequence and "U" in sequence)
             sequence_with_x_count += bool(sequence and "X" in sequence)
@@ -743,6 +764,9 @@ def build_snapshot(
             ),
             canonical_block_count=canonical_block_count,
             canonical_block_label_overlap_count=canonical_overlap_count,
+            canonical_block_label_overlap_accession_count=(
+                canonical_overlap_accession_count
+            ),
             sequence_with_u_count=sequence_with_u_count,
             sequence_with_x_count=sequence_with_x_count,
             missing_sequence_count=missing_sequence_count,
@@ -770,6 +794,7 @@ def build_snapshot(
                 {
                     "schema_version": "cofactor9.1.foundation-generation.v1",
                     "dataset_version": dataset_version,
+                    "formula_rule_version": FORMULA_RULE_VERSION,
                     "source_artifact_sha256": expected_sha256,
                     "master": {
                         "sha256": sha256_file(master_target),
@@ -879,6 +904,8 @@ def verify_foundation_generation(config_path: str | Path) -> dict[str, Any]:
         raise ValueError("Foundation generation schema_version is unsupported")
     if generation.get("dataset_version") != config.get("dataset_version"):
         raise ValueError("Foundation generation dataset_version is inconsistent")
+    if generation.get("formula_rule_version") != FORMULA_RULE_VERSION:
+        raise ValueError("Foundation generation formula_rule_version is inconsistent")
 
     observed: dict[str, dict[str, Any]] = {}
     for generation_key, config_key in (
@@ -908,5 +935,6 @@ def verify_foundation_generation(config_path: str | Path) -> dict[str, Any]:
     return {
         "schema_version": generation["schema_version"],
         "dataset_version": generation["dataset_version"],
+        "formula_rule_version": generation["formula_rule_version"],
         "artifacts": observed,
     }

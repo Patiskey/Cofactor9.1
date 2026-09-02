@@ -54,6 +54,17 @@ class ExactSequenceGroupTests(unittest.TestCase):
 
         self.assertEqual(result["summary"]["conflict_groups"], 0)
 
+    def test_block_multiplicity_is_part_of_the_formula(self):
+        records = [
+            record("A", "same", [["CHEBI:1"]]),
+            record("B", "same", [["CHEBI:1"], ["CHEBI:1"]]),
+        ]
+
+        result = analyze_exact_sequence_groups(records)
+
+        self.assertEqual(result["summary"]["conflict_groups"], 1)
+        self.assertEqual(result["summary"]["conflict_entries"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

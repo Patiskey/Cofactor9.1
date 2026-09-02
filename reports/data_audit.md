@@ -1,13 +1,19 @@
 # Cofactor9.1 data and view audit
 
 - Dataset version: `Cofactor9.1`
-- Rule version: `cofactor9.1.views.v2`
+- Rule version: `cofactor9.1.views.v3`
 - Full-Structured accessions: 5337
 - Single-Clean accessions: 3971
 - Single-Clean exact-sequence entities: 3942
 - Single-Clean labels: 64
 - Core-Provisional accessions: 3233
 - Ambiguity-Challenge accessions: 2082
+
+## Gold formula checkpoints
+
+- Preserved non-empty cofactor blocks: 5911
+- Overlapping block pairs: 8
+- Accessions with a label repeated across blocks: 6
 
 ## Ontology checkpoints
 
@@ -51,16 +57,16 @@
 
 ## Artifact SHA-256
 
-- `ambiguity_challenge`: `37e3976751c24c4b18854fcc5ce000a8f6d4d408f0ca5e76640ec011012fdc35`
-- `core_provisional`: `a9e05ce403d654eabf0ac4ba7c0fdd5152957f322e9f2f4b88d91a4dbe9a0e19`
-- `full_structured`: `ed27e0c5d3538656b06b3c21cde0bc9831e6917161006dd92f7737d0d8472824`
-- `label_catalog`: `62a0418549a6811459de3f24972696d259bacd41e68bc7886a8a603dd77c01fd`
-- `ontology_audit`: `e0abffc4137856d5ea00411a84cb3e0226c8a7a3ec7fa0ff9d000716ccd84526`
-- `single_clean`: `2a4122637a60e40b681fd9694881855058c09f13f9189bf32210cc17894a69dc`
-- `view_audit`: `fba8f40f6a8a3b30166632ae51d7ff051826a6d6f4dce14f770ff4c16b9695d7`
+- `ambiguity_challenge`: `e773520fe6df1a2c710dba2e890a8b2eb83398bb2ee593b2af6219745af05278`
+- `core_provisional`: `bed3532d0e4ad332e125df90a02b2b6bba4239f342743367c547cf39545d56bd`
+- `full_structured`: `57cf6b5c74de55306b9bbc623514aabdfed6919f291e92ec8ddcfc21599a44fa`
+- `label_catalog`: `22f79b263ed3b027da2bcc8cc4c475a38a56393cb5dd6a6b7590b1ac979bc234`
+- `ontology_audit`: `4cb9414d0e4a59168e2739378d66a2b2f9a9a2909650bf852124b713c27f41c3`
+- `single_clean`: `195a59d1a1bd945bdbcdb9cc0045fdd0387716887737cfc15936944485d936d1`
+- `view_audit`: `540f98cfc353c8929924362382e470e8537f73e742b20d17bd43ccf5a1c7f43a`
 
 ## Input SHA-256
 
 - `chebi_artifact_sha256`: `d4102c38436128a0fc434dcd250e3d86cf6b36e9315e9c13444b5bf37ab47afe`
 - `chebi_decompressed_content_sha256`: `d14526badabba6959c9d5facacb8a97d84b006347fae84cb5d7ca30a91ccd131`
-- `master_sha256`: `6305ff8cef0d0cdc52b5debe8ec99c12d0ed8377600dc1e6c46746cc21092a8c`
+- `master_sha256`: `6ff828f4d93175ea48bce228b2ee5921118ed358a69e9e8dcf071d82193d7f4f`

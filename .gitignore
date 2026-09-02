@@ -16,7 +16,20 @@ data/raw/*.owl
 # Large generated run payloads remain local but are fully manifested.
 runs/*/cases/*/attempts/
 runs/*/raw_responses/
+runs/transport-smoke-*/
+runs/*/codex-executable
+runs/*/.active/
+runs/*/.inflight/
+runs/*/.staging/
+
+# Cross-process lifecycle locks are operational state, not benchmark data.
+.run-locks/
 
 # The private case map links opaque prompt IDs back to UniProt accessions.
 # It is regenerated locally for scoring and must never be published.
-data/derived/cases.private-map.jsonl
+data/derived/cases*.private-map.jsonl
+
+# Pre-formal v3 cases used accession-derived pseudonyms. Keep the local audit
+# copy, but publish and run only the sequence-derived v4 projection.
+data/derived/cases.v3.jsonl
+data/derived/cases.v3.manifest.json

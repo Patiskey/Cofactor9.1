@@ -11,11 +11,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
-import hmac
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import stat
 from typing import Any
 
@@ -37,8 +37,8 @@ PRIVATE_MAPPING_MODE = 0o600
 
 _VIEW_RECORD_SCHEMA_VERSION = "cofactor9.1.view-record.v1"
 _LABEL_CATALOG_SCHEMA_VERSION = "cofactor9.1.label-catalog.v1"
-_ID_DERIVATION_VERSION = "cofactor9.1.hmac-case-id.v1"
-_FROZEN_HMAC_SEED = b"Cofactor9.1 deterministic prompt cases seed v1"
+_ID_DERIVATION_VERSION = "cofactor9.1.sequence-case-id.v2"
+_ID_DERIVATION_DOMAIN = _ID_DERIVATION_VERSION.encode("ascii")
 _ACCESSION = re.compile(r"[A-Z0-9]{6,10}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SAMPLE_ID = re.compile(r"sample_[0-9a-f]{32}\Z")
@@ -132,6 +132,12 @@ class _SourceCase:
     sequence: str
     sequence_sha256: str
     experimental_label_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceOccurrence:
+    source: _SourceCase
+    duplicate_ordinal: int
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -371,7 +377,7 @@ def _parse_source_cases(
             raise CaseArtifactError(
                 f"{location} sequence must contain only ASCII amino-acid symbols"
             ) from error
-        if not hmac.compare_digest(observed_sequence_sha256, sequence_sha256):
+        if not secrets.compare_digest(observed_sequence_sha256, sequence_sha256):
             raise CaseArtifactError(f"{location} sequence SHA256 does not match value")
 
         derived = _required_mapping(record, "derived", location=location)
@@ -402,28 +408,37 @@ def _parse_source_cases(
     return tuple(source_cases)
 
 
-def _hmac_digest(domain: bytes, accession: str, *, counter: int = 0) -> bytes:
-    message = domain + b"\0" + str(counter).encode("ascii") + b"\0" + accession.encode(
-        "ascii"
+def _opaque_sample_id(sequence_sha256: str, duplicate_ordinal: int) -> str:
+    message = (
+        _ID_DERIVATION_DOMAIN
+        + b"\0"
+        + sequence_sha256.encode("ascii")
+        + b"\0"
+        + str(duplicate_ordinal).encode("ascii")
     )
-    return hmac.new(_FROZEN_HMAC_SEED, message, hashlib.sha256).digest()
+    token = hashlib.sha256(message).hexdigest()[:32]
+    return f"sample_{token}"
 
 
-def _opaque_sample_id(accession: str) -> str:
-    counter = 0
-    while True:
-        token = _hmac_digest(b"sample-id", accession, counter=counter).hex()[:32]
-        sample_id = f"sample_{token}"
-        if accession.casefold() not in sample_id.casefold():
-            return sample_id
-        counter += 1
+def _ordered_occurrences(
+    sources: tuple[_SourceCase, ...],
+) -> tuple[_SourceOccurrence, ...]:
+    exact_sequence_groups: dict[tuple[str, str], list[_SourceCase]] = {}
+    for source in sources:
+        sequence_identity = (source.sequence_sha256, source.sequence)
+        exact_sequence_groups.setdefault(sequence_identity, []).append(source)
 
-
-def _case_order_key(source: _SourceCase) -> tuple[bytes, str]:
-    return (
-        _hmac_digest(b"case-order", source.accession),
-        _opaque_sample_id(source.accession),
-    )
+    occurrences: list[_SourceOccurrence] = []
+    for sequence_identity in sorted(exact_sequence_groups):
+        group = sorted(
+            exact_sequence_groups[sequence_identity],
+            key=lambda source: source.accession,
+        )
+        occurrences.extend(
+            _SourceOccurrence(source=source, duplicate_ordinal=ordinal)
+            for ordinal, source in enumerate(group)
+        )
+    return tuple(occurrences)
 
 
 def _validate_expected_count(expected_case_count: object) -> int:
@@ -474,12 +489,16 @@ def derive_case_artifacts(
             f"absent_from_gold={absent_from_gold}"
         )
 
-    ordered_sources = sorted(sources, key=_case_order_key)
+    ordered_occurrences = _ordered_occurrences(sources)
     cases: list[PromptCase] = []
     private_mappings: list[PrivateCaseMapping] = []
     seen_sample_ids: set[str] = set()
-    for source in ordered_sources:
-        sample_id = _opaque_sample_id(source.accession)
+    for occurrence in ordered_occurrences:
+        source = occurrence.source
+        sample_id = _opaque_sample_id(
+            source.sequence_sha256,
+            occurrence.duplicate_ordinal,
+        )
         if sample_id in seen_sample_ids:
             raise CaseArtifactError(
                 "Deterministic sample_id collision; refusing ambiguous mapping"
@@ -529,8 +548,14 @@ def derive_case_artifacts(
         "catalog_version": catalog_version,
         "view_rule_version": view_rule_version,
         "id_derivation": {
-            "algorithm": "HMAC-SHA256",
+            "algorithm": "SHA-256",
             "digest_hex_characters": 32,
+            "domain": _ID_DERIVATION_VERSION,
+            "inputs": [
+                "sequence_sha256",
+                "exact_sequence_duplicate_ordinal",
+            ],
+            "ordinal_base": 0,
             "version": _ID_DERIVATION_VERSION,
         },
         "private_mapping": {
@@ -697,7 +722,7 @@ def _verify_existing(
             observed = path.read_bytes()
         except OSError as error:
             raise CaseArtifactError(f"Cannot read {description}: {error}") from error
-        if not hmac.compare_digest(observed, expected):
+        if not secrets.compare_digest(observed, expected):
             raise CaseArtifactError(
                 f"Existing {description} content/SHA256 differs from "
                 "deterministic bytes"

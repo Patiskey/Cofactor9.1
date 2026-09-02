@@ -42,23 +42,15 @@ def _chebi_sort_key(label: str) -> tuple[int, int, str]:
 def canonicalize_formula(
     blocks: Iterable[Iterable[str]],
 ) -> tuple[tuple[str, ...], ...]:
-    """Canonicalize a CNF block formula without changing raw occurrences."""
+    """Canonicalize labels while preserving every non-empty source block."""
 
-    unique_blocks = {
-        frozenset(label for label in block if label)
+    ordered = [
+        tuple(sorted({label for label in block if label}, key=_chebi_sort_key))
         for block in blocks
-    }
-    unique_blocks.discard(frozenset())
-    absorbed = {
-        block
-        for block in unique_blocks
-        if any(other < block for other in unique_blocks)
-    }
-    retained = unique_blocks - absorbed
-    ordered = [tuple(sorted(block, key=_chebi_sort_key)) for block in retained]
+    ]
     return tuple(
         sorted(
-            ordered,
+            (block for block in ordered if block),
             key=lambda block: tuple(_chebi_sort_key(label) for label in block),
         )
     )
@@ -253,16 +245,17 @@ def _alphabet(sequence: str | None) -> tuple[AlphabetStatus, tuple[str, ...]]:
 
 
 def _formula_shape(
-    experimental_label_ids: tuple[str, ...],
     raw_experimental_blocks: Sequence[Sequence[str]],
 ) -> FormulaShape:
-    if not experimental_label_ids:
-        return FormulaShape.NONE
-    if len(experimental_label_ids) == 1:
-        return FormulaShape.SINGLE
     active_blocks = [set(block) for block in raw_experimental_blocks if block]
+    if not active_blocks:
+        return FormulaShape.NONE
     if len(active_blocks) == 1:
-        return FormulaShape.PURE_OR
+        return (
+            FormulaShape.SINGLE
+            if len(active_blocks[0]) == 1
+            else FormulaShape.PURE_OR
+        )
     if all(len(block) == 1 for block in active_blocks):
         return FormulaShape.PURE_AND
     return FormulaShape.MIXED_AND_OR
@@ -370,10 +363,7 @@ def parse_uniprot_entry(
         experimental_label_ids=experimental_label_ids,
         all_cofactor_label_ids=all_cofactor_label_ids,
         gold_formula=gold_formula,
-        formula_shape=_formula_shape(
-            experimental_label_ids,
-            raw_experimental_blocks,
-        ),
+        formula_shape=_formula_shape(raw_experimental_blocks),
         evidence_status=_evidence_status(occurrences),
         experimental_occurrence_count=len(experimental_occurrences),
     )

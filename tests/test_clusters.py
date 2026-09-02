@@ -466,7 +466,7 @@ class FrozenHomologyClusterIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(
             artifacts.manifest["input_sha256"]["full_structured"],
-            "ed27e0c5d3538656b06b3c21cde0bc9831e6917161006dd92f7737d0d8472824",
+            "57cf6b5c74de55306b9bbc623514aabdfed6919f291e92ec8ddcfc21599a44fa",
         )
         self.assertEqual(
             artifacts.manifest["input_sha256"]["canonical_fasta"],

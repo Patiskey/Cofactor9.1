@@ -311,6 +311,47 @@ class SyntheticViewTests(unittest.TestCase):
         self.assertEqual(conflict["adjudication"]["status"], "PENDING")
         self.assertEqual(by_accession["F00006"]["adjudication"]["status"], "PENDING")
 
+    def test_marks_cross_block_overlap_without_dropping_the_record(self) -> None:
+        overlapping = _record(
+            "H00008",
+            "MMMM",
+            [
+                ("CHEBI:2", "magnesium", True),
+                ("CHEBI:3", "zinc ion", True),
+            ],
+            formula=[["CHEBI:2"], ["CHEBI:2", "CHEBI:3"]],
+            formula_shape="MIXED_AND_OR",
+        )
+
+        artifacts = derive_view_artifacts(
+            [overlapping],
+            _synthetic_graph(),
+            dataset_version="Cofactor9.1-test",
+            input_hashes={"master_sha256": "a" * 64, "chebi_sha256": "b" * 64},
+        )
+
+        self.assertEqual(len(artifacts.full_structured), 1)
+        self.assertEqual(len(artifacts.ambiguity_challenge), 1)
+        row = artifacts.full_structured[0]
+        self.assertIn(
+            "OVERLAPPING_BLOCK_LABEL",
+            row["derived"]["reason_codes"],
+        )
+        self.assertIn(
+            "OVERLAPPING_BLOCK_LABEL",
+            row["derived"]["view_membership"]["ambiguity_challenge"][
+                "reason_codes"
+            ],
+        )
+        self.assertEqual(
+            artifacts.view_audit["summary"]["formula"],
+            {
+                "canonical_block_count": 2,
+                "canonical_block_label_overlap_count": 1,
+                "overlapping_block_label_accession_count": 1,
+            },
+        )
+
     def test_core_selects_a_representative_after_entry_quality_filtering(self) -> None:
         dirty_first = _record(
             "A00001",
@@ -526,7 +567,7 @@ class SyntheticViewTests(unittest.TestCase):
             first_row = json.loads(paths["full_structured"].read_text().splitlines()[0])
             self.assertEqual(first_row["entry"]["accession"], "A00001")
             self.assertEqual(first_row["schema_version"], "cofactor9.1.view-record.v1")
-            self.assertEqual(first_row["derivation"]["rule_version"], "cofactor9.1.views.v2")
+            self.assertEqual(first_row["derivation"]["rule_version"], "cofactor9.1.views.v3")
             self.assertEqual(
                 set(first_row["derivation"]["input_hashes"]),
                 {"chebi_artifact_sha256", "chebi_decompressed_content_sha256", "master_sha256"},
@@ -687,6 +728,12 @@ class FrozenViewTests(unittest.TestCase):
             self.assertEqual(first.duplicate_entries, 81)
             self.assertEqual(first.conflict_groups, 6)
             self.assertEqual(first.conflict_entries, 12)
+            self.assertEqual(first.canonical_block_count, 5911)
+            self.assertEqual(first.canonical_block_label_overlap_count, 8)
+            self.assertEqual(
+                first.overlapping_block_label_accession_count,
+                6,
+            )
             self.assertEqual(first.note_pending_single_clean, 477)
             self.assertEqual(first.label_count, 104)
             self.assertEqual(
@@ -697,6 +744,44 @@ class FrozenViewTests(unittest.TestCase):
             audit = json.loads(paths["view_audit"].read_text())
             diagnostics = audit["diagnostic_counts"]
             core_audit = audit["core_predicate_audit"]
+            overlap_accessions = [
+                "P0ABJ9",
+                "Q57580",
+                "Q6AYK3",
+                "Q8NFF5",
+                "Q9LNJ9",
+                "Q9SIY3",
+            ]
+            self.assertEqual(
+                audit["formula_audit"]["overlapping_block_label_accessions"],
+                overlap_accessions,
+            )
+            self.assertEqual(
+                audit["reason_code_accession_counts"][
+                    "OVERLAPPING_BLOCK_LABEL"
+                ],
+                6,
+            )
+            self.assertEqual(
+                audit["challenge_reason_accession_counts"][
+                    "OVERLAPPING_BLOCK_LABEL"
+                ],
+                6,
+            )
+            full_overlap_accessions = [
+                row["entry"]["accession"]
+                for row in (
+                    json.loads(line)
+                    for line in paths["full_structured"].read_text().splitlines()
+                )
+                if "OVERLAPPING_BLOCK_LABEL" in row["derived"]["reason_codes"]
+            ]
+            challenge_accessions = {
+                json.loads(line)["entry"]["accession"]
+                for line in paths["ambiguity_challenge"].read_text().splitlines()
+            }
+            self.assertEqual(full_overlap_accessions, overlap_accessions)
+            self.assertTrue(set(overlap_accessions).issubset(challenge_accessions))
             self.assertGreater(core_audit["sequence_with_selenocysteine_u"], 0)
             self.assertEqual(
                 core_audit["violation_counts"],

@@ -14,7 +14,9 @@
     "core_provisional": "data/derived/core_provisional.jsonl",
     "ambiguity_challenge": "data/derived/ambiguity_challenge.jsonl",
     "label_catalog": "data/derived/label_catalog.json",
-    "cases": "data/derived/cases.jsonl",
+    "homology_clusters": "data/derived/homology_clusters.v3.jsonl",
+    "homology_clusters_manifest": "data/derived/homology_clusters.v3.manifest.json",
+    "cases": "data/derived/cases.v4.jsonl",
     "runs": "runs",
     "reports": "reports"
   },
@@ -76,16 +78,17 @@
       "8": 1
     },
     "formula_shape_counts": {
-      "SINGLE": 4179,
+      "SINGLE": 4178,
       "PURE_OR": 647,
-      "PURE_AND": 448,
+      "PURE_AND": 449,
       "MIXED_AND_OR": 63
     },
     "experimental_occurrence_count": 6981,
     "unique_accession_experimental_label_count": 6974,
     "duplicate_experimental_occurrence_count": 7,
-    "canonical_block_count": 5904,
-    "canonical_block_label_overlap_count": 0,
+    "canonical_block_count": 5911,
+    "canonical_block_label_overlap_count": 8,
+    "canonical_block_label_overlap_accession_count": 6,
     "sequence_with_u_count": 11,
     "sequence_with_x_count": 8,
     "missing_sequence_count": 0,
@@ -102,6 +105,8 @@
   "run": {
     "transport": "codex_cli_chatgpt_oauth",
     "max_attempts": 3,
-    "concurrency": 1
+    "concurrency": 16,
+    "timeout_seconds": 600,
+    "circuit_breaker_threshold": 1
   }
 }

@@ -42,7 +42,7 @@ block_i = OR(label_1, label_2, ...)
 The `molecule` field conditionally scopes a block to a chain or isoform. The
 original ChEBI term remains the exact target; ancestors are stored separately.
 
-### 3. Core-Single
+### 3. Core-Provisional
 
 A conservative derived view for conventional exact classification. A record is
 eligible only if it has one experimental label and one label across all
@@ -89,18 +89,24 @@ must be preserved; deduplicated labels are a derived projection only.
 
 ## Formula contract
 
-The 1,158 multi-experimental-label entries form three mutually exclusive
-shapes:
+Block formulas across all 5,337 entries form four mutually exclusive shapes:
 
+- `SINGLE`: 4,178 entries.
 - `PURE_OR`: 647 entries.
-- `PURE_AND`: 448 entries.
+- `PURE_AND`: 449 entries.
 - `MIXED_AND_OR`: 63 entries.
 
-For scoring, canonicalize each CNF formula deterministically: deduplicate labels
-inside a block, deduplicate equal blocks, remove a superset block when another
-block absorbs it, then sort labels and blocks. Raw blocks and occurrences remain
-untouched. The frozen snapshot must yield 5,904 canonical blocks, with no label
-overlap between canonical blocks.
+The separate label-cardinality checkpoint remains 4,179 entries with one unique
+experimental ChEBI ID; one of those entries contains two equal singleton blocks
+and therefore has a `PURE_AND`, not `SINGLE`, formula. For scoring, canonicalize
+deterministically by deduplicating labels only inside each block, then sorting
+labels and blocks. Equal blocks, subset/superset blocks and their multiplicity
+must remain intact: separate UniProt blocks are jointly annotated facts and may
+not be absorbed. The frozen snapshot yields 5,911 non-empty experimental blocks.
+Six accessions contain a label repeated across blocks, spanning eight overlapping
+block pairs. Their gold formulas remain in Master/Full/Challenge, but the current
+set-valued response cannot represent block role or multiplicity, so they receive
+zero weight in every formal ranking and form a separate diagnostic slice.
 
 ## Exact duplicate contract
 
@@ -119,6 +125,7 @@ overlap between canonical blocks.
 - `PURE_OR_FORMULA`
 - `PURE_AND_FORMULA`
 - `MIXED_AND_OR_FORMULA`
+- `OVERLAPPING_BLOCK_LABEL`
 - `REFERENCE_ONLY_EXPERIMENTAL_EVIDENCE`
 - `PARTIAL_DIRECT_PUBMED_EVIDENCE`
 - `DUPLICATE_EXPERIMENTAL_LABEL_OCCURRENCE`
@@ -163,8 +170,12 @@ Each master row stores, at minimum:
 
 ## Model input and response contract
 
-Each request receives only a randomly mapped opaque sample ID, the amino-acid
+Each request receives only a sequence-derived opaque sample ID, the amino-acid
 sequence and the same frozen 104-term catalog of `{chebi_id, name}` objects.
+The ID is a domain-separated SHA-256 projection of the sequence SHA-256 and its
+stable ordinal within an exact-sequence group; neither its token nor public case
+ordering is derived from accession. Thus it adds no metadata beyond the supplied
+sequence while remaining unique for all 5,337 accession-level calls.
 `name` is exactly the preferred label in the frozen ChEBI 254 ontology; the
 prompt projection never contains accession counts, frequency bands, UniProt
 display names or any case-specific subset. The catalog is sorted by numeric
@@ -196,17 +207,45 @@ record-exact, with no missing or extra cofactor. `status` is `predict` iff this
 value is at least the preregistered threshold 0.5, otherwise `abstain`. Even an
 abstention must include a non-empty joint set and a `primary_guess` that belongs
 to it; primary scores still evaluate the prediction. `primary_guess` exists
-only for conventional top-1 Core-Single evaluation and never changes structured
+only for conventional top-1 Core-Provisional evaluation and never changes structured
 set scoring. Malformed JSON, an out-of-vocabulary label, a duplicate label, an
 unexpected field, threshold-inconsistent status or a mismatched sample ID is an
 explicit prediction error and is never repaired by another LLM.
 
-The authenticated transport is Codex CLI 0.152.0 using ChatGPT OAuth. Every
-attempt runs in a fresh empty `/private/tmp` directory with user config/rules
-ignored, read-only sandboxing and all shell, web, browser, MCP, app, plugin,
-image, hook, goal and multi-agent tools disabled. Any tool or unknown event
-invalidates the attempt. Direct Responses API without tools remains preferred
-when a separate API credential becomes available.
+The authenticated transport is Codex CLI 0.152.0 using ChatGPT OAuth. A new
+run resolves the installed Node launcher to the native executable, copies the
+217,812,496-byte native binary into the run, records its SHA-256 and mode, and
+executes only that read-only `0555` copy. Resume therefore does not depend on
+the external Codex installation. The manifest also freezes the Python launcher
+runtime path/version/hash and the exact observed feature states.
+
+Every attempt runs in a fresh empty `/private/tmp` directory with user
+config/rules ignored and read-only sandboxing. Shell, web, browser, MCP, app,
+plugin, image, hook, goal, multi-agent, sleep, tool-suggestion, host-code and
+in-app-browser surfaces are disabled and preflighted against the frozen native
+binary. Codex 0.152.0 reports `unified_exec=true` as an internal backend while
+`shell_tool=false`; the manifest records this exception instead of falsely
+claiming every internal feature is false. Any exposed tool event or unknown
+event invalidates the attempt.
+
+Before a request can start, the complete prompt and empty stdout/stderr files
+are atomically published. A durable supervisor writes and fsyncs launch
+identity before opening its execution gate, binds model stdio directly to
+those files, and writes a completion witness containing return code, timeout,
+cancellation and start-error state. If the parent process dies, resume first
+checks both process groups and raw-replays a durable completion; it does not
+discard an already completed response and pay for an automatic duplicate.
+The irreducible machine-loss boundary is recorded explicitly as
+`INTERRUPTED_ATTEMPT / remote outcome unknown` before a later retry.
+
+The run manifest freezes all evaluation artifacts and implementation hashes.
+Run-level invocations, attempts, incidents and terminals are append-only and
+validated from raw bytes. A lifecycle lock prevents concurrent run/resume or
+run/score mutation. Once all 5,337 terminals exist, `--resume` becomes a
+strict, byte-preserving validation no-op; retrying a terminal error requires a
+new run ID. Score stages both deterministic outputs under the same lifecycle
+lock and publishes `metrics.json` plus `report.md` with crash-recoverable,
+no-clobber semantics.
 
 ## Scoring contract
 
@@ -214,7 +253,7 @@ Report at minimum:
 
 - Full-Structured block coverage and label precision/recall/F1.
 - Exact ChEBI and hierarchy-aware label scores.
-- Core-Single accuracy, macro-F1 and balanced accuracy.
+- Core-Provisional accuracy, macro-F1 and balanced accuracy.
 - Head/mid/tail results using marginal accession frequency in Master-5337:
   Head >=100, Mid 10--99, Tail <10 (14/20/70 labels).
 - Accession-micro, label-macro and exact-sequence-entity macro results.
@@ -229,11 +268,15 @@ diagnostic only: an ancestor/descendant at distance `d` receives `1/(1+d)`,
 while strict ChEBI exact remains the headline ranking.
 
 Main structured metrics always score `predicted_cofactors` regardless of
-abstention; Core-Single top-1 metrics use `primary_guess`. Separately report
+abstention; Core-Provisional top-1 metrics use `primary_guess`. Separately report
 coverage, selective risk/AURC, record-exact Brier score and calibration. Exact
-sequence-consistent groups receive total weight one; the six conflicting
-sequence groups receive zero primary weight and are reported as a conflict
-slice while remaining in raw results.
+sequence-consistent groups receive total weight one. The six conflicting
+sequence groups (12 accessions) and six cross-block-overlap accessions are
+disjoint; all 18 receive zero weight in accession, entity, label, cluster,
+frequency, hierarchy and calibration rankings and are reported in explicit
+diagnostic slices while remaining in raw results and model calls. This leaves
+5,319 rank-eligible accessions, 5,283 exact-sequence entities and 5,056 homology
+clusters. Core-Provisional contains no excluded record.
 
 ## Project structure
 
@@ -257,13 +300,18 @@ reports/                     human-readable audit and result reports
 python3 -m unittest discover -s tests -v
 python3 -m cofactor_bench.cli build --config config/benchmark.json
 python3 -m cofactor_bench.cli validate --config config/benchmark.json
-python3 -m cofactor_bench.cli run --config config/benchmark.json --smoke 5
-python3 -m cofactor_bench.cli run --config config/benchmark.json --resume
-python3 -m cofactor_bench.cli score --config config/benchmark.json
+python3 -m cofactor_bench.cli run --config config/benchmark.json --run-id <gate-id> --infrastructure-gate --limit 1
+python3 -m cofactor_bench.cli run --config config/benchmark.json --run-id <formal-id>
+python3 -m cofactor_bench.cli run --config config/benchmark.json --run-id <formal-id> --resume
+python3 -m cofactor_bench.cli validate --config config/benchmark.json --stage run --run-id <formal-id>
+python3 -m cofactor_bench.cli score --config config/benchmark.json --run-id <formal-id>
 ```
 
-The smoke gate verifies infrastructure only. It is never reported as the final
-benchmark result; the requested run targets the complete selected view.
+The explicitly named infrastructure gate verifies transport only. It is never
+reported as a pilot or final benchmark result; the formal run defaults to all
+5,337 cases and may not use `--limit`. The formal runner itself executes its
+first selected case as a same-run transport probe and expands to concurrency
+16 only after that case succeeds; this is not a separate pilot or subset.
 
 ## Testing strategy
 
@@ -300,15 +348,17 @@ and recorded.
    record per benchmark case, or an explicit audited failure after retries.
 8. Saved predictions reproduce the final machine-readable metrics and a human
    report without another model call.
-9. Frozen assertions include 4,179 single-experimental-label entries, 3,971
-   single-clean entries, 647/448/63 formula shapes, 39 duplicate sequence groups
-   with six conflicts, and 59 ChEBI ancestor pairs involving 44 terms.
+9. Frozen assertions include 4,179 entries with one unique experimental label,
+   3,971 single-clean entries, 4,178/647/449/63 formula shapes, 5,911 preserved
+   blocks, six overlap accessions/eight overlapping block pairs, 39 duplicate
+   sequence groups with six conflicts, and 59 ChEBI ancestor pairs involving 44
+   terms.
 
 ## Approved assumptions
 
 The user explicitly approved continuing the proposed design and autonomous
 overnight execution. Therefore Master-5337 + Full-Structured primary +
-Core-Single and Ambiguity-Challenge derived views are treated as approved.
+Core-Provisional and Ambiguity-Challenge derived views are treated as approved.
 
 The exact model transport is intentionally adapter-based until the local
 authenticated runtime is verified. Transport choice may not change prompts,

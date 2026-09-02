@@ -7,7 +7,11 @@ from typing import Any, Iterable
 
 
 def _formula_key(formula: Iterable[Iterable[str]]) -> tuple[tuple[str, ...], ...]:
-    blocks = {tuple(sorted(set(block))) for block in formula}
+    blocks = [
+        tuple(sorted(set(block)))
+        for block in formula
+        if block
+    ]
     return tuple(sorted(blocks))
 
 
