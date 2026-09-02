@@ -6,6 +6,7 @@ import argparse
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 import fcntl
+import getpass
 import hashlib
 import json
 import os
@@ -26,6 +27,28 @@ from .run import (
 )
 from .runner import RunAborted, RunCasesError
 from .views import build_views_from_config
+
+
+_MISSING_ENVIRONMENT_VALUE = object()
+
+
+@contextmanager
+def _deepseek_credential_from_tty(enabled: bool):
+    if not enabled:
+        yield
+        return
+    value = getpass.getpass("DeepSeek API key: ")
+    if not value:
+        raise RunContractError("DeepSeek API key must not be empty")
+    previous = os.environ.get("DEEPSEEK_API_KEY", _MISSING_ENVIRONMENT_VALUE)
+    os.environ["DEEPSEEK_API_KEY"] = value
+    try:
+        yield
+    finally:
+        if previous is _MISSING_ENVIRONMENT_VALUE:
+            os.environ.pop("DEEPSEEK_API_KEY", None)
+        else:
+            os.environ["DEEPSEEK_API_KEY"] = str(previous)
 
 
 def _json_bytes(value: object) -> bytes:
@@ -561,7 +584,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--circuit-breaker-threshold", type=int, choices=(1,))
     run.add_argument("--limit", type=int)
     run.add_argument("--infrastructure-gate", action="store_true")
-    run.add_argument("--codex-executable", default="codex")
+    run.add_argument(
+        "--codex-executable",
+        "--transport-executable",
+        dest="codex_executable",
+        default="codex",
+    )
+    run.add_argument("--deepseek-api-key-stdin", action="store_true")
 
     score = subparsers.add_parser("score", help="score one complete formal run")
     score.add_argument("--config", default="config/benchmark.json")
@@ -574,41 +603,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw_argv = tuple(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(raw_argv)
     try:
-        if args.command == "build":
-            result = _build_command(args.config)
-        elif args.command == "validate":
-            result = _validate_command(
-                args.config,
-                stage=args.stage,
-                run_id=args.run_id,
-                executable=args.codex_executable,
-            )
-        elif args.command == "run":
-            result = execute_run_from_config(
-                config_path=args.config,
-                run_id=args.run_id,
-                resume=args.resume,
-                concurrency=args.concurrency,
-                timeout_seconds=args.timeout_seconds,
-                circuit_breaker_threshold=args.circuit_breaker_threshold,
-                limit=args.limit,
-                infrastructure_gate=args.infrastructure_gate,
-                executable=args.codex_executable,
-                invocation_argv=(
-                    sys.executable,
-                    "-m",
-                    "cofactor_bench.cli",
-                    *raw_argv,
-                ),
-            ).to_dict()
-        elif args.command == "score":
-            result = _score_command(
-                args.config,
-                run_id=args.run_id,
-            )
-        else:  # pragma: no cover - argparse constrains this path.
-            parser.error(f"unsupported command {args.command!r}")
-            return 2
+        with _deepseek_credential_from_tty(
+            args.command == "run" and args.deepseek_api_key_stdin
+        ):
+            if args.command == "build":
+                result = _build_command(args.config)
+            elif args.command == "validate":
+                result = _validate_command(
+                    args.config,
+                    stage=args.stage,
+                    run_id=args.run_id,
+                    executable=args.codex_executable,
+                )
+            elif args.command == "run":
+                result = execute_run_from_config(
+                    config_path=args.config,
+                    run_id=args.run_id,
+                    resume=args.resume,
+                    concurrency=args.concurrency,
+                    timeout_seconds=args.timeout_seconds,
+                    circuit_breaker_threshold=args.circuit_breaker_threshold,
+                    limit=args.limit,
+                    infrastructure_gate=args.infrastructure_gate,
+                    executable=args.codex_executable,
+                    invocation_argv=(
+                        sys.executable,
+                        "-m",
+                        "cofactor_bench.cli",
+                        *raw_argv,
+                    ),
+                ).to_dict()
+            elif args.command == "score":
+                result = _score_command(
+                    args.config,
+                    run_id=args.run_id,
+                )
+            else:  # pragma: no cover - argparse constrains this path.
+                parser.error(f"unsupported command {args.command!r}")
+                return 2
     except (RunAborted, RunCasesError) as error:
         error_payload: dict[str, object] = {
             "status": "run_interrupted",

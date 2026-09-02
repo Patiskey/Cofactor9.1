@@ -2067,6 +2067,46 @@ class CommandLineTests(unittest.TestCase):
             ),
         )
 
+    def test_deepseek_key_is_read_without_echo_and_removed_after_run(self) -> None:
+        secret = "test-only-secret-value"
+        summary = mock.Mock()
+        summary.to_dict.return_value = {"run_id": "deepseek-v1", "is_complete": True}
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        def execute_effect(**_: object) -> mock.Mock:
+            self.assertEqual(os.environ.get("DEEPSEEK_API_KEY"), secret)
+            return summary
+
+        with mock.patch.dict(
+            os.environ, {"DEEPSEEK_API_KEY": "prior-value"}
+        ), mock.patch(
+            "cofactor_bench.cli.getpass.getpass", return_value=secret
+        ) as read_secret, mock.patch(
+            "cofactor_bench.cli.execute_run_from_config", side_effect=execute_effect
+        ) as execute, redirect_stdout(stdout), redirect_stderr(stderr):
+            status = cli.main(
+                [
+                    "run",
+                    "--run-id",
+                    "deepseek-v1",
+                    "--deepseek-api-key-stdin",
+                    "--transport-executable",
+                    "cofactor_bench/deepseek_adapter.py",
+                ]
+            )
+            self.assertEqual(os.environ.get("DEEPSEEK_API_KEY"), "prior-value")
+
+        self.assertEqual(status, 0)
+        read_secret.assert_called_once_with("DeepSeek API key: ")
+        self.assertNotIn(secret, stdout.getvalue())
+        self.assertNotIn(secret, stderr.getvalue())
+        self.assertNotIn(secret, repr(execute.call_args))
+        self.assertEqual(
+            execute.call_args.kwargs["executable"],
+            "cofactor_bench/deepseek_adapter.py",
+        )
+
     def test_cli_rejects_any_breaker_other_than_one(self) -> None:
         stderr = io.StringIO()
         with redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
