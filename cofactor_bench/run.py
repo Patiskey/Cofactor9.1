@@ -3753,6 +3753,10 @@ def _validate_run_tree(
     require_operational_quiescence: bool,
 ) -> None:
     for entry in run_dir.iterdir():
+        if entry.name == ".DS_Store":
+            if entry.is_symlink() or not entry.is_file():
+                raise RunContractError("platform metadata artifact is unsafe")
+            continue
         if entry.name not in _RUN_TOP_LEVEL_ALLOWED:
             raise RunContractError(f"unexpected run artifact {entry.name!r}")
         if entry.is_symlink():

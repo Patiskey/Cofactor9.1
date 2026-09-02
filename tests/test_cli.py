@@ -1651,6 +1651,11 @@ class RunOrchestrationTests(unittest.TestCase):
         self.assertEqual(summary.usage, {"input_tokens": 3, "output_tokens": 3})
         self.assertRegex(summary.incident_composite_sha256, r"^[0-9a-f]{64}$")
 
+        finder_metadata = self.root / "runs" / "incident-v1" / ".DS_Store"
+        finder_metadata.write_bytes(b"non-scientific platform metadata")
+        self.assertEqual(self._validate(run_id="incident-v1").incident_count, 1)
+        finder_metadata.unlink()
+
         (incident_dir / "unexpected.txt").write_text("x")
         with self.assertRaisesRegex(RunContractError, "incident artifact set"):
             self._validate(run_id="incident-v1")
