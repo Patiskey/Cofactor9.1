@@ -38,6 +38,36 @@ MAX_ATTEMPTS = 3
 MAX_CONCURRENCY = 16
 DEFAULT_CIRCUIT_BREAKER_THRESHOLD = 1
 
+
+@dataclass(frozen=True, slots=True)
+class RunnerModelSettings:
+    """Immutable model identity shared by argv and every ledger record."""
+
+    model: str
+    reasoning_effort: str
+    service_tier: str
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("model", self.model),
+            ("reasoning_effort", self.reasoning_effort),
+            ("service_tier", self.service_tier),
+        ):
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > 128
+                or any(ord(character) < 32 for character in value)
+            ):
+                raise ValueError(f"{name} must be a safe nonempty string")
+
+
+DEFAULT_MODEL_SETTINGS = RunnerModelSettings(
+    model=MODEL,
+    reasoning_effort=REASONING_EFFORT,
+    service_tier=SERVICE_TIER,
+)
+
 INFRASTRUCTURE_INCIDENT_CODES = frozenset(
     {
         "AUTH_ERROR",
@@ -1305,6 +1335,7 @@ def _invoke_codex(
     staging_directory: Path,
     supervisor: _ProcessSupervisor,
     cancellation_event: threading.Event | None,
+    model_settings: RunnerModelSettings = DEFAULT_MODEL_SETTINGS,
 ) -> _DurableCapture:
     started = time.monotonic()
     started_at = _utc_now()
@@ -1341,6 +1372,7 @@ def _invoke_codex(
             executable=executable,
             schema_path=schema_path,
             working_directory=working_directory,
+            model_settings=model_settings,
         )
         gate_read, gate_write = os.pipe()
         launcher_config = {
@@ -1998,6 +2030,7 @@ def _validate_recorded_argv(
     executable: str | Path,
     schema_path: Path,
     allow_interrupted_sentinel: bool,
+    model_settings: RunnerModelSettings = DEFAULT_MODEL_SETTINGS,
 ) -> None:
     if not isinstance(value, list) or not value or any(
         not isinstance(item, str) for item in value
@@ -2022,6 +2055,7 @@ def _validate_recorded_argv(
         executable=executable,
         schema_path=schema_path,
         working_directory=Path(value[index + 1]),
+        model_settings=model_settings,
     )
     if value != expected:
         raise RunnerError("ledger argv differs from the hardened command")
@@ -2035,6 +2069,7 @@ def _load_attempt_state(
     persisted_prompt: str,
     executable: str | Path,
     schema_path: Path,
+    model_settings: RunnerModelSettings = DEFAULT_MODEL_SETTINGS,
 ) -> _AttemptState:
     observed: set[str] = set()
     for entry in attempt_directory.iterdir():
@@ -2068,9 +2103,9 @@ def _load_attempt_state(
         "schema_version": "cofactor9.1.attempt.v1",
         "sample_id": case.sample_id,
         "attempt_number": attempt_number,
-        "model": MODEL,
-        "reasoning_effort": REASONING_EFFORT,
-        "service_tier": SERVICE_TIER,
+        "model": model_settings.model,
+        "reasoning_effort": model_settings.reasoning_effort,
+        "service_tier": model_settings.service_tier,
         "environment_policy": "fixed-allowlist",
         "prompt_sha256": _sha256_bytes(prompt_bytes),
         "stdout_sha256": _sha256_bytes(stdout_bytes),
@@ -2083,6 +2118,7 @@ def _load_attempt_state(
         executable=executable,
         schema_path=schema_path,
         allow_interrupted_sentinel=False,
+        model_settings=model_settings,
     )
     duration = payload.get("duration_seconds")
     if (
@@ -2195,6 +2231,7 @@ def _load_transport_incident_record(
     persisted_prompt: str,
     executable: str | Path,
     schema_path: Path,
+    model_settings: RunnerModelSettings = DEFAULT_MODEL_SETTINGS,
 ) -> Mapping[str, object]:
     observed: set[str] = set()
     for entry in directory.iterdir():
@@ -2224,9 +2261,9 @@ def _load_transport_incident_record(
         "schema_version": "cofactor9.1.transport-incident.v1",
         "sample_id": case.sample_id,
         "incident_number": incident_number,
-        "model": MODEL,
-        "reasoning_effort": REASONING_EFFORT,
-        "service_tier": SERVICE_TIER,
+        "model": model_settings.model,
+        "reasoning_effort": model_settings.reasoning_effort,
+        "service_tier": model_settings.service_tier,
         "environment_policy": "fixed-allowlist",
         "prompt_sha256": _sha256_bytes(prompt_bytes),
         "stdout_sha256": _sha256_bytes(stdout_bytes),
@@ -2332,6 +2369,7 @@ def _load_transport_incident_record(
         executable=executable,
         schema_path=schema_path,
         allow_interrupted_sentinel=False,
+        model_settings=model_settings,
     )
     if not isinstance(cancelled, bool):
         raise RunnerError("transport incident cancelled field is invalid")
@@ -2388,6 +2426,7 @@ def _validate_transport_incidents(
     persisted_prompt: str,
     executable: str | Path,
     schema_path: Path,
+    model_settings: RunnerModelSettings = DEFAULT_MODEL_SETTINGS,
 ) -> tuple[Mapping[str, object], ...]:
     return tuple(
         _load_transport_incident_record(
@@ -2397,12 +2436,17 @@ def _validate_transport_incidents(
             persisted_prompt=persisted_prompt,
             executable=executable,
             schema_path=schema_path,
+            model_settings=model_settings,
         )
         for number in _incident_numbers(incidents_directory)
     )
 
 
-def _load_terminal(path: Path, case: PromptCase) -> TerminalResult:
+def _load_terminal(
+    path: Path,
+    case: PromptCase,
+    model_settings: RunnerModelSettings = DEFAULT_MODEL_SETTINGS,
+) -> TerminalResult:
     try:
         terminal_bytes = path.read_bytes()
     except OSError as error:
@@ -2413,9 +2457,9 @@ def _load_terminal(path: Path, case: PromptCase) -> TerminalResult:
     expected_identity = {
         "schema_version": "cofactor9.1.terminal.v1",
         "sample_id": case.sample_id,
-        "model": MODEL,
-        "reasoning_effort": REASONING_EFFORT,
-        "service_tier": SERVICE_TIER,
+        "model": model_settings.model,
+        "reasoning_effort": model_settings.reasoning_effort,
+        "service_tier": model_settings.service_tier,
         "prompt_version": PROMPT_VERSION,
         "catalog_version": case.catalog_version,
     }
@@ -2634,6 +2678,7 @@ def build_codex_argv(
     executable: str | Path,
     schema_path: Path,
     working_directory: Path,
+    model_settings: RunnerModelSettings = DEFAULT_MODEL_SETTINGS,
 ) -> list[str]:
     """Build the fixed, shell-free, least-capability Codex command."""
 
@@ -2643,11 +2688,11 @@ def build_codex_argv(
     argv.extend(
         (
             "--model",
-            MODEL,
+            model_settings.model,
             "-c",
-            'model_reasoning_effort="max"',
+            f'model_reasoning_effort="{model_settings.reasoning_effort}"',
             "-c",
-            'service_tier="fast"',
+            f'service_tier="{model_settings.service_tier}"',
             "-c",
             'approval_policy="never"',
             "-c",
@@ -2715,7 +2760,10 @@ class CodexExecRunner:
         max_attempts: int = MAX_ATTEMPTS,
         timeout_seconds: float = 600.0,
         circuit_breaker_threshold: int = DEFAULT_CIRCUIT_BREAKER_THRESHOLD,
+        model_settings: RunnerModelSettings = DEFAULT_MODEL_SETTINGS,
     ) -> None:
+        if not isinstance(model_settings, RunnerModelSettings):
+            raise TypeError("model_settings must be RunnerModelSettings")
         if (
             isinstance(max_attempts, bool)
             or not isinstance(max_attempts, int)
@@ -2746,6 +2794,7 @@ class CodexExecRunner:
         self.max_attempts = max_attempts
         self.timeout_seconds = float(timeout_seconds)
         self.circuit_breaker_threshold = circuit_breaker_threshold
+        self.model_settings = model_settings
         self._staging_directory = self.run_dir / ".staging"
         self._supervisor = _ProcessSupervisor()
         self._batch_lock = threading.Lock()
@@ -2780,7 +2829,9 @@ class CodexExecRunner:
                 raise CompletedCaseError(
                     f"case {case.sample_id} already has a terminal record"
                 )
-            terminal_result = _load_terminal(terminal_path, case)
+            terminal_result = _load_terminal(
+                terminal_path, case, self.model_settings
+            )
 
         attempts_directory = case_directory / "attempts"
         existing_attempts = _attempt_numbers(attempts_directory)
@@ -2822,6 +2873,7 @@ class CodexExecRunner:
             persisted_prompt=persisted_prompt,
             executable=self.executable,
             schema_path=self.schema_path,
+            model_settings=self.model_settings,
         )
         states: list[_AttemptState] = []
         for existing_attempt in existing_attempts:
@@ -2881,6 +2933,7 @@ class CodexExecRunner:
                     persisted_prompt=persisted_prompt,
                     executable=self.executable,
                     schema_path=self.schema_path,
+                    model_settings=self.model_settings,
                 )
             )
 
@@ -3041,6 +3094,7 @@ class CodexExecRunner:
                 persisted_prompt=persisted_prompt,
                 executable=self.executable,
                 schema_path=self.schema_path,
+                model_settings=self.model_settings,
             )
             destination = (
                 self.run_dir
@@ -3154,6 +3208,7 @@ class CodexExecRunner:
                 persisted_prompt=persisted_prompt,
                 executable=self.executable,
                 schema_path=self.schema_path,
+                model_settings=self.model_settings,
             )
             destination = (
                 self.run_dir
@@ -3181,6 +3236,7 @@ class CodexExecRunner:
                 persisted_prompt=persisted_prompt,
                 executable=self.executable,
                 schema_path=self.schema_path,
+                model_settings=self.model_settings,
             )
             destination = (
                 self.run_dir
@@ -3264,6 +3320,7 @@ class CodexExecRunner:
                 executable=self.executable,
                 schema_path=self.schema_path,
                 allow_interrupted_sentinel=False,
+                model_settings=self.model_settings,
             )
             if active_payload.get("timeout_seconds") != self.timeout_seconds:
                 raise RunnerError(
@@ -3356,9 +3413,9 @@ class CodexExecRunner:
             "argv": list(capture.argv)
             if capture is not None
             else [str(self.executable), "<interrupted-before-capture>"],
-            "model": MODEL,
-            "reasoning_effort": REASONING_EFFORT,
-            "service_tier": SERVICE_TIER,
+            "model": self.model_settings.model,
+            "reasoning_effort": self.model_settings.reasoning_effort,
+            "service_tier": self.model_settings.service_tier,
             "returncode": capture.returncode if capture is not None else None,
             "timed_out": capture.timed_out if capture is not None else False,
             "cancelled": capture.cancelled if capture is not None else None,
@@ -3503,9 +3560,9 @@ class CodexExecRunner:
             "completed_at": durable.completed_at,
             "duration_seconds": round(capture.duration_seconds, 6),
             "argv": list(capture.argv),
-            "model": MODEL,
-            "reasoning_effort": REASONING_EFFORT,
-            "service_tier": SERVICE_TIER,
+            "model": self.model_settings.model,
+            "reasoning_effort": self.model_settings.reasoning_effort,
+            "service_tier": self.model_settings.service_tier,
             "returncode": capture.returncode,
             "timed_out": capture.timed_out,
             "error_code": failure.code if failure else None,
@@ -3580,6 +3637,7 @@ class CodexExecRunner:
                 staging_directory=self._staging_directory,
                 supervisor=self._supervisor,
                 cancellation_event=cancellation_event,
+                model_settings=self.model_settings,
             )
             state = self._finalize_capture(
                 case=case,
@@ -3834,9 +3892,9 @@ class CodexExecRunner:
             "error_code": result.error_code,
             "error_message": result.error_message,
             "completed_at": _utc_now(),
-            "model": MODEL,
-            "reasoning_effort": REASONING_EFFORT,
-            "service_tier": SERVICE_TIER,
+            "model": self.model_settings.model,
+            "reasoning_effort": self.model_settings.reasoning_effort,
+            "service_tier": self.model_settings.service_tier,
             "prompt_version": PROMPT_VERSION,
             "catalog_version": case.catalog_version,
             "prompt_sha256": _sha256_text(render_prompt(case)),
@@ -3860,6 +3918,7 @@ __all__ = [
     "CodexExecRunner",
     "CompletedCaseError",
     "DEFAULT_CIRCUIT_BREAKER_THRESHOLD",
+    "DEFAULT_MODEL_SETTINGS",
     "DISABLED_FEATURES",
     "MAX_ATTEMPTS",
     "MAX_CONCURRENCY",
@@ -3869,6 +3928,7 @@ __all__ = [
     "RunCancelled",
     "RunCasesError",
     "RunnerError",
+    "RunnerModelSettings",
     "SERVICE_TIER",
     "SYSTEMATIC_FAILURE_CODES",
     "SystematicFailure",

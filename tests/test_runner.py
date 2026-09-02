@@ -28,6 +28,7 @@ from cofactor_bench.runner import (
     RunAborted,
     RunCancelled,
     RunCasesError,
+    RunnerModelSettings,
     RunnerError,
     SystematicFailure,
     build_codex_argv,
@@ -290,7 +291,11 @@ class CodexExecRunnerTests(unittest.TestCase):
         max_attempts: int = 3,
         timeout_seconds: float = 10.0,
         circuit_breaker_threshold: int = 1,
+        model_settings: RunnerModelSettings | None = None,
     ) -> CodexExecRunner:
+        kwargs = {}
+        if model_settings is not None:
+            kwargs["model_settings"] = model_settings
         return CodexExecRunner(
             run_dir=self.run_dir,
             executable=self.fake_codex,
@@ -298,6 +303,7 @@ class CodexExecRunnerTests(unittest.TestCase):
             max_attempts=max_attempts,
             timeout_seconds=timeout_seconds,
             circuit_breaker_threshold=circuit_breaker_threshold,
+            **kwargs,
         )
 
     def case_directory(self, case: PromptCase) -> Path:
@@ -415,6 +421,36 @@ class CodexExecRunnerTests(unittest.TestCase):
         self.assertIn('approval_policy="never"', argv)
         self.assertIn('web_search="disabled"', argv)
         self.assertEqual(argv[-1], "-")
+
+    def test_model_settings_are_frozen_in_argv_attempt_and_terminal(self) -> None:
+        settings = RunnerModelSettings(
+            model="deepseek-v4-flash",
+            reasoning_effort="high",
+            service_tier="default",
+        )
+        case = self.make_case()
+        self.set_scenario("success")
+
+        self.make_runner(model_settings=settings).run_case(case)
+
+        call = self.calls()[0]
+        self.assertIn("deepseek-v4-flash", call["args"])
+        self.assertIn('model_reasoning_effort="high"', call["args"])
+        self.assertIn('service_tier="default"', call["args"])
+        case_directory = self.case_directory(case)
+        attempt = json.loads(
+            (
+                case_directory
+                / "attempts"
+                / "attempt-0001"
+                / "attempt.json"
+            ).read_text()
+        )
+        terminal = json.loads((case_directory / "terminal.json").read_text())
+        for payload in (attempt, terminal):
+            self.assertEqual(payload["model"], "deepseek-v4-flash")
+            self.assertEqual(payload["reasoning_effort"], "high")
+            self.assertEqual(payload["service_tier"], "default")
 
     def test_tool_event_is_nonretryable_pollution(self) -> None:
         case = self.make_case()
