@@ -1,4 +1,7 @@
 import json
+from pathlib import Path
+import subprocess
+import sys
 import unittest
 
 from cofactor_bench.deepseek_adapter import (
@@ -6,6 +9,7 @@ from cofactor_bench.deepseek_adapter import (
     MAX_OUTPUT_TOKENS,
     build_request_body,
     error_event,
+    perform_request,
     response_event_stream,
 )
 from cofactor_bench.runner import parse_codex_stdout
@@ -115,6 +119,86 @@ class DeepSeekAdapterContractTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 with self.assertRaises(ValueError):
                     response_event_stream(raw)
+
+    def test_http_call_uses_bearer_auth_without_exposing_the_key(self) -> None:
+        prediction = {
+            "schema_version": "cofactor9.1.response.v2",
+            "sample_id": "sample_0123456789abcdef0123456789abcdef",
+            "status": "predict",
+            "predicted_cofactors": ["CHEBI:1"],
+            "primary_guess": "CHEBI:1",
+            "confidence_complete": 0.75,
+        }
+        envelope = {
+            "id": "response-123",
+            "model": "deepseek-v4-flash-0731",
+            "choices": [
+                {"finish_reason": "stop", "message": {"content": json.dumps(prediction)}}
+            ],
+            "usage": {"total_tokens": 120},
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _size):
+                return json.dumps(envelope).encode("utf-8")
+
+        class FakeOpener:
+            def __init__(self):
+                self.request = None
+
+            def open(self, request, *, timeout):
+                self.request = request
+                self.timeout = timeout
+                return FakeResponse()
+
+        secret = "test-only-secret-value"
+        opener = FakeOpener()
+
+        stream = perform_request("return json", secret, opener=opener, timeout=12.0)
+
+        self.assertEqual(opener.request.full_url, API_ENDPOINT)
+        self.assertEqual(opener.request.get_header("Authorization"), f"Bearer {secret}")
+        self.assertEqual(opener.timeout, 12.0)
+        self.assertNotIn(secret, stream)
+        self.assertEqual(parse_codex_stdout(stream).thread_id, "response-123")
+
+    def test_standalone_cli_identifies_itself_and_emulates_feature_preflight(self) -> None:
+        script = Path(__file__).parents[1] / "cofactor_bench" / "deepseek_adapter.py"
+        version = subprocess.run(
+            [sys.executable, str(script), "--version"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        features = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "features",
+                "list",
+                "--disable",
+                "shell_tool",
+                "--disable",
+                "browser_use",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(version.returncode, 0)
+        self.assertEqual(version.stdout.strip(), "cofactor9.1-deepseek-adapter 1.0.0")
+        self.assertEqual(features.returncode, 0)
+        self.assertEqual(
+            features.stdout.splitlines(),
+            ["shell_tool stable false", "browser_use stable false"],
+        )
 
 
 if __name__ == "__main__":

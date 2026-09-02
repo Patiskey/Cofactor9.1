@@ -14,7 +14,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import json
+import os
+import sys
 from typing import Any
+import urllib.error
+import urllib.request
 
 
 API_ENDPOINT = "https://api.deepseek.com/chat/completions"
@@ -23,6 +27,13 @@ REASONING_EFFORT = "high"
 SERVICE_TIER = "default"
 MAX_OUTPUT_TOKENS = 16_384
 ADAPTER_VERSION = "cofactor9.1-deepseek-adapter 1.0.0"
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+DEFAULT_TIMEOUT_SECONDS = 600.0
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args: object, **_kwargs: object) -> None:
+        return None
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -161,14 +172,144 @@ def error_event(status: int | None, _detail: str = "") -> str:
     return _canonical_line({"type": "error", "message": message}) + "\n"
 
 
+def perform_request(
+    prompt: str,
+    api_key: str,
+    *,
+    opener: Any | None = None,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> str:
+    """Make one HTTPS request and return a validated replay event stream."""
+
+    if (
+        not isinstance(api_key, str)
+        or not api_key
+        or any(ord(character) < 32 for character in api_key)
+    ):
+        raise ValueError("API key is missing or malformed")
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not 0 < float(timeout) < 86_400
+    ):
+        raise ValueError("timeout must be positive and below one day")
+    request = urllib.request.Request(
+        API_ENDPOINT,
+        data=build_request_body(prompt),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Cofactor9.1/DeepSeekAdapter-1.0",
+        },
+        method="POST",
+    )
+    transport = (
+        urllib.request.build_opener(_NoRedirect()) if opener is None else opener
+    )
+    with transport.open(request, timeout=float(timeout)) as response:
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError("DeepSeek response exceeds the fixed size limit")
+    return response_event_stream(raw)
+
+
+def _disabled_features(argv: list[str]) -> list[str]:
+    features: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] != "--disable" or index + 1 >= len(argv):
+            raise ValueError("feature preflight arguments are invalid")
+        feature = argv[index + 1]
+        if not feature or feature in features:
+            raise ValueError("feature preflight contains an invalid duplicate")
+        features.append(feature)
+        index += 2
+    return features
+
+
+def _option_value(argv: list[str], option: str) -> str:
+    if argv.count(option) != 1:
+        raise ValueError(f"adapter requires exactly one {option}")
+    index = argv.index(option)
+    if index + 1 >= len(argv):
+        raise ValueError(f"adapter option {option} has no value")
+    return argv[index + 1]
+
+
+def _validate_exec_arguments(argv: list[str]) -> None:
+    if not argv or argv[0] != "exec" or argv[-1] != "-":
+        raise ValueError("adapter requires the hardened exec command")
+    if _option_value(argv, "--model") != MODEL:
+        raise ValueError("adapter model differs from its frozen contract")
+    configs = [argv[index + 1] for index, item in enumerate(argv[:-1]) if item == "-c"]
+    required = {
+        f'model_reasoning_effort="{REASONING_EFFORT}"',
+        f'service_tier="{SERVICE_TIER}"',
+        'approval_policy="never"',
+        'web_search="disabled"',
+    }
+    if not required.issubset(configs):
+        raise ValueError("adapter execution settings differ from its frozen contract")
+    for flag in ("--json", "--output-schema", "-C"):
+        if flag not in argv:
+            raise ValueError(f"adapter requires {flag}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments == ["--version"]:
+        print(ADAPTER_VERSION)
+        return 0
+    if arguments[:2] == ["features", "list"]:
+        try:
+            features = _disabled_features(arguments[2:])
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return 2
+        for feature in features:
+            print(f"{feature} stable false")
+        return 0
+    try:
+        _validate_exec_arguments(arguments)
+        prompt = sys.stdin.read()
+        key = os.environ.get("DEEPSEEK_API_KEY", "")
+        stream = perform_request(prompt, key)
+    except urllib.error.HTTPError as error:
+        sys.stdout.write(error_event(error.code))
+        print(f"DeepSeek HTTP {error.code}", file=sys.stderr)
+        return 1
+    except urllib.error.URLError:
+        sys.stdout.write(error_event(None))
+        print("DeepSeek transport failure", file=sys.stderr)
+        return 1
+    except ValueError as error:
+        message = str(error)
+        status = 401 if "API key" in message else 400
+        sys.stdout.write(error_event(status))
+        print("DeepSeek adapter rejected local input", file=sys.stderr)
+        return 1
+    finally:
+        if "key" in locals():
+            key = ""
+    sys.stdout.write(stream)
+    return 0
+
+
 __all__ = [
     "ADAPTER_VERSION",
     "API_ENDPOINT",
     "MAX_OUTPUT_TOKENS",
+    "MAX_RESPONSE_BYTES",
     "MODEL",
     "REASONING_EFFORT",
     "SERVICE_TIER",
     "build_request_body",
     "error_event",
+    "main",
+    "perform_request",
     "response_event_stream",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
