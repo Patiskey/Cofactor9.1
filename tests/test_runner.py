@@ -7,7 +7,12 @@ import tempfile
 import time
 import unittest
 
-from cofactor_bench.prompt import PromptCase, create_prompt_case, render_prompt
+from cofactor_bench.prompt import (
+    CatalogTerm,
+    PromptCase,
+    create_prompt_case,
+    render_prompt,
+)
 from cofactor_bench.runner import (
     CodexExecRunner,
     CompletedCaseError,
@@ -58,10 +63,11 @@ with calls_path.open("a", encoding="utf-8") as handle:
 
 sample_id = payload["sample_id"]
 prediction = {
-    "schema_version": "cofactor9.1.response.v1",
+    "schema_version": "cofactor9.1.response.v2",
     "sample_id": sample_id,
     "status": "predict",
-    "best_guess": [payload["label_catalog"]["labels"][0]],
+    "predicted_cofactors": [payload["label_catalog"]["terms"][0]["chebi_id"]],
+    "primary_guess": payload["label_catalog"]["terms"][0]["chebi_id"],
     "confidence_complete": 0.75,
 }
 if kind == "mismatch":
@@ -131,8 +137,11 @@ if kind == "tool_exit":
 '''
 
 
-def label_catalog() -> tuple[str, ...]:
-    return tuple(f"CHEBI:{index}" for index in range(1, 105))
+def label_catalog() -> tuple[CatalogTerm, ...]:
+    return tuple(
+        CatalogTerm(f"CHEBI:{index}", f"frozen cofactor {index}")
+        for index in range(1, 105)
+    )
 
 
 class CodexExecRunnerTests(unittest.TestCase):
@@ -153,7 +162,7 @@ class CodexExecRunnerTests(unittest.TestCase):
     def make_case(self) -> PromptCase:
         return create_prompt_case(
             sequence="MSEQUENCEUX",
-            allowed_labels=label_catalog(),
+            catalog_terms=label_catalog(),
             catalog_version="uniprot-2026_02-chebi-v1",
         )
 
@@ -345,7 +354,7 @@ class CodexExecRunnerTests(unittest.TestCase):
             sample_id=case.sample_id,
             sequence="MDIFFERENTSEQUENCE",
             catalog_version=case.catalog_version,
-            allowed_labels=case.allowed_labels,
+            catalog_terms=case.catalog_terms,
         )
 
         with self.assertRaisesRegex(RunnerError, "prompt"):
@@ -383,7 +392,7 @@ class CodexExecRunnerTests(unittest.TestCase):
             sample_id=case.sample_id,
             sequence="MDIFFERENTSEQUENCE",
             catalog_version=case.catalog_version,
-            allowed_labels=case.allowed_labels,
+            catalog_terms=case.catalog_terms,
         )
         self.set_scenario("success")
         interrupted = (

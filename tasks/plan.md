@@ -65,8 +65,8 @@ frozen raw JSON + ChEBI ontology
 
 ## Phase 4: Real run and report
 
-- Task 10: Verify authenticated `gpt-5.6-sol` max/fast transport with a
-  five-case smoke gate.
+- Task 10: Verify authenticated `gpt-5.6-sol` max/fast transport with a real
+  one-case infrastructure gate. This is not a pilot or a reported result.
 - Task 11: Run the complete configured benchmark view with retries and resume.
 - Task 12: Score saved responses and write machine/human result reports.
 

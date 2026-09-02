@@ -10,14 +10,16 @@ import re
 from typing import Literal
 
 
-SCHEMA_VERSION = "cofactor9.1.response.v1"
+SCHEMA_VERSION = "cofactor9.1.response.v2"
+ABSTENTION_THRESHOLD = 0.5
 
 _FIELDS = frozenset(
     {
         "schema_version",
         "sample_id",
         "status",
-        "best_guess",
+        "predicted_cofactors",
+        "primary_guess",
         "confidence_complete",
     }
 )
@@ -36,7 +38,8 @@ class Prediction:
     schema_version: str
     sample_id: str
     status: Literal["predict", "abstain"]
-    best_guess: tuple[str, ...]
+    predicted_cofactors: tuple[str, ...]
+    primary_guess: str
     confidence_complete: float
 
     def to_dict(self) -> dict[str, object]:
@@ -46,7 +49,8 @@ class Prediction:
             "schema_version": self.schema_version,
             "sample_id": self.sample_id,
             "status": self.status,
-            "best_guess": list(self.best_guess),
+            "predicted_cofactors": list(self.predicted_cofactors),
+            "primary_guess": self.primary_guess,
             "confidence_complete": self.confidence_complete,
         }
 
@@ -88,35 +92,48 @@ def validate_prediction(
     if not isinstance(status, str) or status not in _STATUSES:
         raise PredictionValidationError("status must be 'predict' or 'abstain'")
 
-    best_guess_value = payload["best_guess"]
-    if not isinstance(best_guess_value, list) or not best_guess_value:
-        raise PredictionValidationError("best_guess must be a nonempty JSON list")
+    predicted_value = payload["predicted_cofactors"]
+    if not isinstance(predicted_value, list) or not predicted_value:
+        raise PredictionValidationError(
+            "predicted_cofactors must be a nonempty JSON list"
+        )
     if max_labels is not None:
         if isinstance(max_labels, bool) or not isinstance(max_labels, int) or max_labels < 1:
             raise ValueError("max_labels must be a positive integer or None")
-        if len(best_guess_value) > max_labels:
+        if len(predicted_value) > max_labels:
             raise PredictionValidationError(
-                f"best_guess exceeds configured max_labels={max_labels}"
+                f"predicted_cofactors exceeds configured max_labels={max_labels}"
             )
 
     labels: list[str] = []
     seen: set[str] = set()
     allowed = frozenset(allowed_labels)
-    for index, label in enumerate(best_guess_value):
+    for index, label in enumerate(predicted_value):
         if not isinstance(label, str) or _CHEBI_ID.fullmatch(label) is None:
             raise PredictionValidationError(
-                f"best_guess[{index}] must be a canonical CHEBI identifier"
+                f"predicted_cofactors[{index}] must be a canonical CHEBI identifier"
             )
         if label in seen:
             raise PredictionValidationError(
-                f"best_guess contains duplicate label {label!r}"
+                f"predicted_cofactors contains duplicate label {label!r}"
             )
         if label not in allowed:
             raise PredictionValidationError(
-                f"best_guess contains out-of-vocabulary label {label!r}"
+                f"predicted_cofactors contains out-of-vocabulary label {label!r}"
             )
         seen.add(label)
         labels.append(label)
+
+    primary_guess = payload["primary_guess"]
+    if (
+        not isinstance(primary_guess, str)
+        or _CHEBI_ID.fullmatch(primary_guess) is None
+        or primary_guess not in allowed
+        or primary_guess not in seen
+    ):
+        raise PredictionValidationError(
+            "primary_guess must be an allowed member of predicted_cofactors"
+        )
 
     confidence = payload["confidence_complete"]
     if (
@@ -128,12 +145,20 @@ def validate_prediction(
         raise PredictionValidationError(
             "confidence_complete must be a finite number from 0 through 1"
         )
+    expected_status = (
+        "predict" if confidence >= ABSTENTION_THRESHOLD else "abstain"
+    )
+    if status != expected_status:
+        raise PredictionValidationError(
+            "status is inconsistent with the preregistered confidence threshold"
+        )
 
     return Prediction(
         schema_version=SCHEMA_VERSION,
         sample_id=sample_id,
         status=status,
-        best_guess=tuple(labels),
+        predicted_cofactors=tuple(labels),
+        primary_guess=primary_guess,
         confidence_complete=float(confidence),
     )
 
@@ -185,6 +210,7 @@ def parse_prediction_json(
 
 
 __all__ = [
+    "ABSTENTION_THRESHOLD",
     "SCHEMA_VERSION",
     "Prediction",
     "PredictionValidationError",

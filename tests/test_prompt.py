@@ -6,6 +6,7 @@ import unittest
 from cofactor_bench.prompt import (
     CATALOG_SIZE,
     PROMPT_VERSION,
+    CatalogTerm,
     PromptCase,
     PromptValidationError,
     create_prompt_case,
@@ -14,20 +15,23 @@ from cofactor_bench.prompt import (
 )
 
 
-def label_catalog() -> tuple[str, ...]:
-    return tuple(f"CHEBI:{index}" for index in range(1, 105))
+def label_catalog() -> tuple[CatalogTerm, ...]:
+    return tuple(
+        CatalogTerm(f"CHEBI:{index}", f"frozen cofactor {index}")
+        for index in range(1, 105)
+    )
 
 
 class PromptCaseTests(unittest.TestCase):
     def test_create_prompt_case_uses_a_random_opaque_sample_id(self) -> None:
         first = create_prompt_case(
             sequence="MSEQUENCEU",
-            allowed_labels=label_catalog(),
+            catalog_terms=label_catalog(),
             catalog_version="uniprot-2026_02-chebi-v1",
         )
         second = create_prompt_case(
             sequence="MSEQUENCEU",
-            allowed_labels=label_catalog(),
+            catalog_terms=label_catalog(),
             catalog_version="uniprot-2026_02-chebi-v1",
         )
 
@@ -38,7 +42,7 @@ class PromptCaseTests(unittest.TestCase):
     def test_payload_is_a_closed_sequence_only_contract(self) -> None:
         case = create_prompt_case(
             sequence="MSEQUENCEUX",
-            allowed_labels=label_catalog(),
+            catalog_terms=label_catalog(),
             catalog_version="uniprot-2026_02-chebi-v1",
         )
 
@@ -47,9 +51,13 @@ class PromptCaseTests(unittest.TestCase):
         self.assertEqual(set(payload), {"sample_id", "sequence", "label_catalog"})
         self.assertEqual(
             set(payload["label_catalog"]),
-            {"version", "labels"},
+            {"version", "terms"},
         )
-        self.assertEqual(len(payload["label_catalog"]["labels"]), 104)
+        self.assertEqual(len(payload["label_catalog"]["terms"]), 104)
+        self.assertEqual(
+            payload["label_catalog"]["terms"][0],
+            {"chebi_id": "CHEBI:1", "name": "frozen cofactor 1"},
+        )
         self.assertNotIn("accession", json.dumps(payload).lower())
         self.assertNotIn("organism", json.dumps(payload).lower())
         self.assertNotIn("pmid", json.dumps(payload).lower())
@@ -58,7 +66,7 @@ class PromptCaseTests(unittest.TestCase):
     def test_validate_prompt_payload_rejects_metadata_and_gold_fields(self) -> None:
         case = create_prompt_case(
             sequence="MSEQUENCE",
-            allowed_labels=label_catalog(),
+            catalog_terms=label_catalog(),
             catalog_version="uniprot-2026_02-chebi-v1",
         )
         base = case.to_payload()
@@ -82,16 +90,20 @@ class PromptCaseTests(unittest.TestCase):
     def test_catalog_and_sequence_are_validated_without_silent_repair(self) -> None:
         labels = label_catalog()
         invalid_inputs = (
-            {"sequence": "M SEQUENCE", "allowed_labels": labels},
-            {"sequence": "msequence", "allowed_labels": labels},
-            {"sequence": "MSEQUENCE", "allowed_labels": labels[:-1]},
+            {"sequence": "M SEQUENCE", "catalog_terms": labels},
+            {"sequence": "msequence", "catalog_terms": labels},
+            {"sequence": "MSEQUENCE", "catalog_terms": labels[:-1]},
             {
                 "sequence": "MSEQUENCE",
-                "allowed_labels": labels[:-1] + (labels[-2],),
+                "catalog_terms": labels[:-1] + (labels[-2],),
             },
             {
                 "sequence": "MSEQUENCE",
-                "allowed_labels": labels[:-1] + ("CHEBI:0001",),
+                "catalog_terms": labels[:-1] + ("CHEBI:0001",),
+            },
+            {
+                "sequence": "MSEQUENCE",
+                "catalog_terms": tuple(reversed(labels)),
             },
         )
 
@@ -106,7 +118,7 @@ class PromptCaseTests(unittest.TestCase):
     def test_render_prompt_contains_one_canonical_case_payload(self) -> None:
         case = create_prompt_case(
             sequence="MSEQUENCEUX",
-            allowed_labels=label_catalog(),
+            catalog_terms=label_catalog(),
             catalog_version="uniprot-2026_02-chebi-v1",
         )
 
@@ -121,11 +133,15 @@ class PromptCaseTests(unittest.TestCase):
         self.assertEqual(decoded, case.to_payload())
         self.assertEqual(prompt.count(case.sequence), 1)
         self.assertIn(PROMPT_VERSION, prompt)
+        self.assertIn("not a ranked top-k list", prompt)
+        self.assertIn("simultaneously assert", prompt)
+        self.assertIn("record-exact", prompt)
+        self.assertIn("UniProt-style COFACTOR", prompt)
 
     def test_prompt_case_round_trips_the_exact_closed_payload(self) -> None:
         case = create_prompt_case(
             sequence="MSEQUENCEU",
-            allowed_labels=label_catalog(),
+            catalog_terms=label_catalog(),
             catalog_version="uniprot-2026_02-chebi-v1",
         )
 
@@ -150,13 +166,14 @@ class ModelResponseSchemaTests(unittest.TestCase):
                 "schema_version",
                 "sample_id",
                 "status",
-                "best_guess",
+                "predicted_cofactors",
+                "primary_guess",
                 "confidence_complete",
             },
         )
         self.assertEqual(
             schema["properties"]["schema_version"]["const"],
-            "cofactor9.1.response.v1",
+            "cofactor9.1.response.v2",
         )
         self.assertEqual(
             schema["properties"]["schema_version"]["type"],
@@ -166,8 +183,14 @@ class ModelResponseSchemaTests(unittest.TestCase):
             schema["properties"]["status"]["enum"],
             ["predict", "abstain"],
         )
-        self.assertEqual(schema["properties"]["best_guess"]["minItems"], 1)
-        self.assertNotIn("uniqueItems", schema["properties"]["best_guess"])
+        self.assertEqual(
+            schema["properties"]["predicted_cofactors"]["minItems"],
+            1,
+        )
+        self.assertNotIn(
+            "uniqueItems",
+            schema["properties"]["predicted_cofactors"],
+        )
 
 
 if __name__ == "__main__":

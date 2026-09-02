@@ -54,9 +54,10 @@
   - Verify: `python3 -m unittest tests.test_runner -v`
   - Files: `cofactor_bench/runner.py`, `tests/test_runner.py`
 
-- [ ] Task 10: Pass real five-case smoke gate
-  - Acceptance: exact `gpt-5.6-sol` model/settings recorded; five parseable
-    terminal responses; no prompt leakage.
+- [ ] Task 10: Pass a real one-case transport gate
+  - Acceptance: exact `gpt-5.6-sol` model/settings recorded; one parseable
+    terminal response using a real sequence and the full named catalog; no
+    prompt leakage. This is infrastructure validation, not a pilot result.
   - Verify: inspect run manifest and `... validate --stage run`
 
 - [ ] Task 11: Complete the configured full run

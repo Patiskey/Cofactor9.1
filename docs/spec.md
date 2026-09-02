@@ -160,18 +160,26 @@ Each master row stores, at minimum:
 ## Model input and response contract
 
 Each request receives only a randomly mapped opaque sample ID, the amino-acid
-sequence and the frozen 104-term allowed-label catalog. The catalog is sorted
-by numeric ChEBI ID, never by frequency. The model returns one best label for
-each jointly required cofactor block; it does not enumerate all alternatives
-inside an OR block. It must return strict JSON:
+sequence and the same frozen 104-term catalog of `{chebi_id, name}` objects.
+`name` is exactly the preferred label in the frozen ChEBI 254 ontology; the
+prompt projection never contains accession counts, frequency bands, UniProt
+display names or any case-specific subset. The catalog is sorted by numeric
+ChEBI ID, never by frequency, and its order carries no likelihood signal.
+
+The task is specifically to predict UniProt-style `COFACTOR` annotations, not
+ordinary substrates, products or non-cofactor ligands. The model returns an
+unordered joint assertion set: one label for every jointly required `AND`
+block, and only its most likely label for an interchangeable `OR` block. The
+list is not top-k alternatives. It must return strict JSON:
 
 ```json
 {
-  "schema_version": "cofactor9.1.response.v1",
-  "sample_id": "cf91_000001",
+  "schema_version": "cofactor9.1.response.v2",
+  "sample_id": "sample_00000000000000000000000000000000",
   "status": "predict",
-  "best_guess": ["CHEBI:18420"],
-  "confidence_complete": 0.5
+  "predicted_cofactors": ["CHEBI:18420"],
+  "primary_guess": "CHEBI:18420",
+  "confidence_complete": 0.75
 }
 ```
 
@@ -179,10 +187,15 @@ No accession, organism, EC number, database note, literature ID or gold label
 may enter the model prompt. Raw responses, parsed responses, retries, latency,
 token usage and errors are stored under an immutable run ID.
 
-Even an abstention must include a non-empty `best_guess`; the primary score
-always evaluates it. Malformed JSON, an out-of-vocabulary label, an unexpected
-field or a mismatched sample ID is an explicit prediction error and is never
-repaired by another LLM.
+`confidence_complete` is the model's probability that the entire joint set is
+record-exact, with no missing or extra cofactor. `status` is `predict` iff this
+value is at least the preregistered threshold 0.5, otherwise `abstain`. Even an
+abstention must include a non-empty joint set and a `primary_guess` that belongs
+to it; primary scores still evaluate the prediction. `primary_guess` exists
+only for conventional top-1 Core-Single evaluation and never changes structured
+set scoring. Malformed JSON, an out-of-vocabulary label, a duplicate label, an
+unexpected field, threshold-inconsistent status or a mismatched sample ID is an
+explicit prediction error and is never repaired by another LLM.
 
 The authenticated transport is Codex CLI 0.152.0 using ChatGPT OAuth. Every
 attempt runs in a fresh empty `/private/tmp` directory with user config/rules
@@ -211,8 +224,9 @@ reports record exact and block precision/recall/F1. Hierarchy-aware scoring is
 diagnostic only: an ancestor/descendant at distance `d` receives `1/(1+d)`,
 while strict ChEBI exact remains the headline ranking.
 
-Main metrics always score `best_guess` regardless of abstention. Separately
-report coverage, selective risk/AURC, Brier score and calibration. Exact
+Main structured metrics always score `predicted_cofactors` regardless of
+abstention; Core-Single top-1 metrics use `primary_guess`. Separately report
+coverage, selective risk/AURC, record-exact Brier score and calibration. Exact
 sequence-consistent groups receive total weight one; the six conflicting
 sequence groups receive zero primary weight and are reported as a conflict
 slice while remaining in raw results.
