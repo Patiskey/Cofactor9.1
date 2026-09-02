@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -28,6 +29,21 @@ MODEL = "gpt-5.6-sol"
 REASONING_EFFORT = "max"
 SERVICE_TIER = "fast"
 MAX_ATTEMPTS = 3
+MAX_CONCURRENCY = 16
+DEFAULT_CIRCUIT_BREAKER_THRESHOLD = 3
+
+CIRCUIT_BREAKER_ERROR_CODES = frozenset(
+    {
+        "AUTH_ERROR",
+        "CAPACITY_ERROR",
+        "CODEX_EVENT_ERROR",
+        "PROCESS_EXIT",
+        "PROCESS_START_ERROR",
+        "TIMEOUT",
+        "TRANSPORT_ERROR",
+        "TRUNCATED_STDOUT",
+    }
+)
 
 DISABLED_FEATURES = (
     "unbounded_connection_retries",
@@ -93,6 +109,59 @@ class TerminalResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CaseRunFailure:
+    """An in-memory worker exception that was never made into a terminal result."""
+
+    sample_id: str
+    error: Exception
+
+
+class RunCasesError(RunnerError):
+    """Aggregate worker failures without discarding other completed results."""
+
+    def __init__(
+        self,
+        *,
+        completed_results: tuple[TerminalResult, ...],
+        failures: tuple[CaseRunFailure, ...],
+        message: str | None = None,
+    ) -> None:
+        self.completed_results = completed_results
+        self.failures = failures
+        super().__init__(
+            message
+            or f"{len(failures)} case worker(s) failed; "
+            f"{len(completed_results)} result(s) completed"
+        )
+
+
+class RunAborted(RunCasesError):
+    """A circuit-broken batch with explicit append-only resume information."""
+
+    def __init__(
+        self,
+        *,
+        error_code: str,
+        threshold: int,
+        completed_results: tuple[TerminalResult, ...],
+        failures: tuple[CaseRunFailure, ...],
+        pending_sample_ids: tuple[str, ...],
+    ) -> None:
+        self.error_code = error_code
+        self.threshold = threshold
+        self.pending_sample_ids = pending_sample_ids
+        super().__init__(
+            completed_results=completed_results,
+            failures=failures,
+            message=(
+                f"run aborted after {threshold} consecutive {error_code} results; "
+                f"{len(pending_sample_ids)} case(s) were not started and may be "
+                "continued with resume=True"
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class _ProcessCapture:
     argv: tuple[str, ...]
     stdout: str
@@ -144,6 +213,49 @@ _TOOL_ITEM_TYPES = frozenset(
         "app",
     }
 )
+
+_SYSTEMATIC_FAILURE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "AUTH_ERROR",
+        (
+            "authentication failed",
+            "invalid api key",
+            "invalid credential",
+            "not authenticated",
+            "permission denied",
+            "unauthorized",
+        ),
+    ),
+    (
+        "CAPACITY_ERROR",
+        (
+            "capacity",
+            "overloaded",
+            "quota exceeded",
+            "rate limit",
+            "too many requests",
+        ),
+    ),
+    (
+        "TRANSPORT_ERROR",
+        (
+            "connection refused",
+            "connection reset",
+            "dns failure",
+            "network connection",
+            "service unavailable",
+            "tls handshake",
+        ),
+    ),
+)
+
+
+def _classify_systematic_failure(value: str) -> str | None:
+    normalized = value.casefold()
+    for code, markers in _SYSTEMATIC_FAILURE_MARKERS:
+        if any(marker in normalized for marker in markers):
+            return code
+    return None
 
 
 def _decode_outer_event(line: str, line_number: int) -> Mapping[str, object]:
@@ -294,10 +406,15 @@ def parse_codex_stdout(stdout: str) -> CodexOutput:
             usage = dict(candidate_usage)
             seen_completed = True
         elif event_type in {"turn.failed", "error"}:
+            code = _classify_systematic_failure(
+                json.dumps(event, ensure_ascii=True, sort_keys=True)
+            )
             raise AttemptFailure(
-                "CODEX_EVENT_ERROR",
+                code or "CODEX_EVENT_ERROR",
                 "Codex reported an error event",
-                retry_disposition="retryable",
+                retry_disposition=(
+                    "nonretryable" if code == "AUTH_ERROR" else "retryable"
+                ),
             )
 
     if not seen_thread or not seen_turn or not seen_completed or len(messages) != 1:
@@ -561,10 +678,17 @@ def _validated_prediction(
             retry_disposition="retryable",
         )
     if capture.returncode != 0:
+        systematic_code = _classify_systematic_failure(
+            f"{capture.stdout}\n{capture.stderr}"
+        )
         raise AttemptFailure(
-            "PROCESS_EXIT",
+            systematic_code or "PROCESS_EXIT",
             f"Codex exited with status {capture.returncode}",
-            retry_disposition="retryable",
+            retry_disposition=(
+                "nonretryable"
+                if systematic_code == "AUTH_ERROR"
+                else "retryable"
+            ),
         )
     if outer_failure is not None:
         raise outer_failure
@@ -647,6 +771,7 @@ class CodexExecRunner:
         schema_path: Path | None = None,
         max_attempts: int = MAX_ATTEMPTS,
         timeout_seconds: float = 600.0,
+        circuit_breaker_threshold: int = DEFAULT_CIRCUIT_BREAKER_THRESHOLD,
     ) -> None:
         if (
             isinstance(max_attempts, bool)
@@ -660,6 +785,12 @@ class CodexExecRunner:
             or timeout_seconds <= 0
         ):
             raise ValueError("timeout_seconds must be positive")
+        if (
+            isinstance(circuit_breaker_threshold, bool)
+            or not isinstance(circuit_breaker_threshold, int)
+            or circuit_breaker_threshold < 1
+        ):
+            raise ValueError("circuit_breaker_threshold must be a positive integer")
         default_schema = (
             Path(__file__).parents[1] / "schemas" / "model-response.schema.json"
         )
@@ -668,6 +799,7 @@ class CodexExecRunner:
         self.schema_path = Path(schema_path) if schema_path else default_schema
         self.max_attempts = max_attempts
         self.timeout_seconds = float(timeout_seconds)
+        self.circuit_breaker_threshold = circuit_breaker_threshold
 
     def run_case(
         self,
@@ -845,17 +977,138 @@ class CodexExecRunner:
         cases: list[PromptCase] | tuple[PromptCase, ...],
         *,
         resume: bool = False,
+        concurrency: int = 1,
     ) -> tuple[TerminalResult, ...]:
-        """Run cases in order, rejecting duplicate IDs within one invocation."""
+        """Run a prevalidated batch with bounded, order-preserving concurrency."""
 
+        if (
+            isinstance(concurrency, bool)
+            or not isinstance(concurrency, int)
+            or not 1 <= concurrency <= MAX_CONCURRENCY
+        ):
+            raise ValueError(
+                f"concurrency must be an integer from 1 through {MAX_CONCURRENCY}"
+            )
+        if not isinstance(cases, (list, tuple)):
+            raise TypeError("cases must be a list or tuple of PromptCase values")
+
+        validated_cases = tuple(cases)
         seen: set[str] = set()
-        results: list[TerminalResult] = []
-        for case in cases:
+        for index, case in enumerate(validated_cases):
+            if not isinstance(case, PromptCase):
+                raise TypeError(
+                    f"cases[{index}] must be a validated PromptCase"
+                )
             if case.sample_id in seen:
                 raise RunnerError(f"duplicate sample_id {case.sample_id!r}")
             seen.add(case.sample_id)
-            results.append(self.run_case(case, resume=resume))
-        return tuple(results)
+        if not self.schema_path.is_file():
+            raise RunnerError(f"response schema does not exist: {self.schema_path}")
+        if not validated_cases:
+            return ()
+
+        terminal_existed = tuple(
+            (
+                self.run_dir
+                / "cases"
+                / case.sample_id
+                / "terminal.json"
+            ).exists()
+            for case in validated_cases
+        )
+        results_by_index: dict[int, TerminalResult] = {}
+        failures_by_index: dict[int, CaseRunFailure] = {}
+        futures: dict[Future[TerminalResult], int] = {}
+        next_index = 0
+        streak_code: str | None = None
+        streak_count = 0
+        aborted_code: str | None = None
+
+        def submit_until_full(executor: ThreadPoolExecutor) -> None:
+            nonlocal next_index
+            while (
+                aborted_code is None
+                and len(futures) < concurrency
+                and next_index < len(validated_cases)
+                and not (streak_count > 0 and futures)
+            ):
+                index = next_index
+                next_index += 1
+                future = executor.submit(
+                    self.run_case,
+                    validated_cases[index],
+                    resume=resume,
+                )
+                futures[future] = index
+
+        with ThreadPoolExecutor(
+            max_workers=concurrency,
+            thread_name_prefix="cofactor-case",
+        ) as executor:
+            submit_until_full(executor)
+            while futures:
+                done, _ = wait(tuple(futures), return_when=FIRST_COMPLETED)
+                completed = sorted(done, key=futures.__getitem__)
+                for future in completed:
+                    index = futures.pop(future)
+                    case = validated_cases[index]
+                    try:
+                        result = future.result()
+                    except Exception as error:
+                        failures_by_index[index] = CaseRunFailure(
+                            sample_id=case.sample_id,
+                            error=error,
+                        )
+                        streak_code = None
+                        streak_count = 0
+                        continue
+
+                    results_by_index[index] = result
+                    error_code = result.error_code
+                    is_new_systematic_failure = (
+                        not terminal_existed[index]
+                        and result.status == "terminal_error"
+                        and error_code in CIRCUIT_BREAKER_ERROR_CODES
+                    )
+                    if not is_new_systematic_failure:
+                        streak_code = None
+                        streak_count = 0
+                        continue
+                    if error_code == streak_code:
+                        streak_count += 1
+                    else:
+                        streak_code = error_code
+                        streak_count = 1
+                    if (
+                        streak_count >= self.circuit_breaker_threshold
+                        and aborted_code is None
+                    ):
+                        aborted_code = error_code
+
+                submit_until_full(executor)
+
+        completed_results = tuple(
+            results_by_index[index] for index in sorted(results_by_index)
+        )
+        failures = tuple(
+            failures_by_index[index] for index in sorted(failures_by_index)
+        )
+        if aborted_code is not None:
+            raise RunAborted(
+                error_code=aborted_code,
+                threshold=self.circuit_breaker_threshold,
+                completed_results=completed_results,
+                failures=failures,
+                pending_sample_ids=tuple(
+                    case.sample_id for case in validated_cases[next_index:]
+                ),
+            )
+        if failures:
+            raise RunCasesError(
+                completed_results=completed_results,
+                failures=failures,
+            )
+        return tuple(results_by_index[index] for index in range(len(validated_cases)))
 
     def _write_terminal(
         self,
@@ -888,12 +1141,18 @@ class CodexExecRunner:
 
 
 __all__ = [
+    "CIRCUIT_BREAKER_ERROR_CODES",
+    "CaseRunFailure",
     "CodexExecRunner",
     "CompletedCaseError",
+    "DEFAULT_CIRCUIT_BREAKER_THRESHOLD",
     "DISABLED_FEATURES",
     "MAX_ATTEMPTS",
+    "MAX_CONCURRENCY",
     "MODEL",
     "REASONING_EFFORT",
+    "RunAborted",
+    "RunCasesError",
     "RunnerError",
     "SERVICE_TIER",
     "TerminalResult",
