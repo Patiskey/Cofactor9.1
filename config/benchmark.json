@@ -1,0 +1,107 @@
+{
+  "schema_version": "cofactor9.1.config.v1",
+  "dataset_version": "Cofactor9.1",
+  "paths": {
+    "uniprot_raw": "data/raw/uniprotkb_cofactor_query_2026_02.json.gz",
+    "uniprot_headers": "data/raw/uniprotkb_cofactor_query_2026_02.headers.txt",
+    "chebi_raw": "data/raw/chebi_lite_2026-08-14.json.gz",
+    "source_manifest": "data/manifests/source.json",
+    "foundation_generation": "data/manifests/foundation_generation.json",
+    "source_candidates": "data/derived/source_candidates.jsonl",
+    "master": "data/derived/master.jsonl",
+    "full_structured": "data/derived/full_structured.jsonl",
+    "single_clean": "data/derived/single_clean.jsonl",
+    "core_provisional": "data/derived/core_provisional.jsonl",
+    "ambiguity_challenge": "data/derived/ambiguity_challenge.jsonl",
+    "label_catalog": "data/derived/label_catalog.json",
+    "cases": "data/derived/cases.jsonl",
+    "runs": "runs",
+    "reports": "reports"
+  },
+  "source": {
+    "uniprot": {
+      "release": "2026_02",
+      "release_date": "2026-06-10",
+      "api_deployment_date": "2026-07-29",
+      "query": "reviewed:true AND ec:* AND fragment:false AND length:[50 TO 1100] AND cc_cofactor_chebi_exp:*",
+      "url": "https://rest.uniprot.org/uniprotkb/stream?format=json&query=reviewed%3Atrue%20AND%20ec%3A%2A%20AND%20fragment%3Afalse%20AND%20length%3A%5B50%20TO%201100%5D%20AND%20cc_cofactor_chebi_exp%3A%2A",
+      "retrieved_at": "2026-09-01T17:25:01Z",
+      "artifact_sha256": "366b6d5924e8138f5e2e6af11bc9f638ef0b37e97123cb9f89d4a759c59612ea",
+      "decompressed_content_sha256": "4b02445b9254579b4a38493f41a4859e131cf9d1ee257665ec1ae1f8710fee43",
+      "artifact_bytes": 34274616,
+      "decompressed_content_bytes": 211025065
+    },
+    "chebi": {
+      "version": "254",
+      "release_date": "2026-08-14",
+      "ontology_date_raw": "14:08:2026 10:24",
+      "version_iri": "http://purl.obolibrary.org/obo/chebi/254/chebi_lite.owl",
+      "url": "https://ftp.ebi.ac.uk/pub/databases/chebi/ontology/chebi_lite.json.gz",
+      "retrieved_at": "2026-09-01T17:25:01Z",
+      "artifact_sha256": "d4102c38436128a0fc434dcd250e3d86cf6b36e9315e9c13444b5bf37ab47afe",
+      "decompressed_content_sha256": "d14526badabba6959c9d5facacb8a97d84b006347fae84cb5d7ca30a91ccd131",
+      "artifact_bytes": 9490617,
+      "decompressed_content_bytes": 186860803
+    }
+  },
+  "expected_foundation": {
+    "source_record_count": 7008,
+    "master_record_count": 5337,
+    "unique_master_accession_count": 5337,
+    "ineligible_record_count": 1671,
+    "experimental_label_count": 104,
+    "evidence_status_counts": {
+      "ALL_DIRECT_PUBMED": 5210,
+      "MIXED_DIRECT_AND_REFERENCE": 3,
+      "ALL_REFERENCE_ONLY": 124
+    },
+    "experimental_label_cardinality_counts": {
+      "1": 4179,
+      "2": 838,
+      "3": 208,
+      "4": 75,
+      "5": 31,
+      "6": 3,
+      "7": 2,
+      "8": 1
+    },
+    "all_label_cardinality_counts": {
+      "1": 3971,
+      "2": 974,
+      "3": 252,
+      "4": 89,
+      "5": 44,
+      "6": 4,
+      "7": 2,
+      "8": 1
+    },
+    "formula_shape_counts": {
+      "SINGLE": 4179,
+      "PURE_OR": 647,
+      "PURE_AND": 448,
+      "MIXED_AND_OR": 63
+    },
+    "experimental_occurrence_count": 6981,
+    "unique_accession_experimental_label_count": 6974,
+    "duplicate_experimental_occurrence_count": 7,
+    "canonical_block_count": 5904,
+    "canonical_block_label_overlap_count": 0,
+    "sequence_with_u_count": 11,
+    "sequence_with_x_count": 8,
+    "missing_sequence_count": 0,
+    "sequence_length_mismatch_count": 0,
+    "missing_experimental_chebi_id_count": 0
+  },
+  "model": {
+    "name": "gpt-5.6-sol",
+    "reasoning_effort": "max",
+    "service_tier": "fast",
+    "prompt_version": "cofactor9.1.sequence-only.named-catalog.v2",
+    "response_schema_version": "cofactor9.1.response.v2"
+  },
+  "run": {
+    "transport": "codex_cli_chatgpt_oauth",
+    "max_attempts": 3,
+    "concurrency": 1
+  }
+}

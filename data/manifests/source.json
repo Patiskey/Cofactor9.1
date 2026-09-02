@@ -1,0 +1,55 @@
+{
+  "schema_version": "cofactor9.1.source-manifest.v1",
+  "dataset_version": "Cofactor9.1",
+  "manifest_created_at": "2026-09-02T01:25:01+08:00",
+  "artifacts": {
+    "uniprot_json": {
+      "path": "data/raw/uniprotkb_cofactor_query_2026_02.json.gz",
+      "media_type": "application/json",
+      "content_encoding": "gzip",
+      "source_url": "https://rest.uniprot.org/uniprotkb/stream?format=json&query=reviewed%3Atrue%20AND%20ec%3A%2A%20AND%20fragment%3Afalse%20AND%20length%3A%5B50%20TO%201100%5D%20AND%20cc_cofactor_chebi_exp%3A%2A",
+      "retrieved_at": "2026-09-01T17:25:01Z",
+      "sha256": "366b6d5924e8138f5e2e6af11bc9f638ef0b37e97123cb9f89d4a759c59612ea",
+      "bytes": 34274616,
+      "decompressed_content_sha256": "4b02445b9254579b4a38493f41a4859e131cf9d1ee257665ec1ae1f8710fee43",
+      "decompressed_content_bytes": 211025065,
+      "record_count": 7008,
+      "release": "2026_02",
+      "release_date": "2026-06-10",
+      "query": "reviewed:true AND ec:* AND fragment:false AND length:[50 TO 1100] AND cc_cofactor_chebi_exp:*",
+      "canonical_retrieval_command": "curl --fail --location --header 'Accept: application/json' --header 'Accept-Encoding: gzip' --output data/raw/uniprotkb_cofactor_query_2026_02.json.gz 'https://rest.uniprot.org/uniprotkb/stream?format=json&query=reviewed%3Atrue%20AND%20ec%3A%2A%20AND%20fragment%3Afalse%20AND%20length%3A%5B50%20TO%201100%5D%20AND%20cc_cofactor_chebi_exp%3A%2A'"
+    },
+    "uniprot_headers": {
+      "path": "data/raw/uniprotkb_cofactor_query_2026_02.headers.txt",
+      "source_url": "https://rest.uniprot.org/uniprotkb/stream?format=json&query=reviewed%3Atrue%20AND%20ec%3A%2A%20AND%20fragment%3Afalse%20AND%20length%3A%5B50%20TO%201100%5D%20AND%20cc_cofactor_chebi_exp%3A%2A",
+      "retrieved_at": "2026-09-01T17:25:01Z",
+      "response_date": "2026-09-01T16:35:57Z",
+      "sha256": "9baf74dc0186e7791e24d301da7075fd4bfc1bf2c9b564e1d600d37289dafd7e",
+      "bytes": 868,
+      "x_uniprot_release": "2026_02",
+      "x_uniprot_release_date": "10-June-2026",
+      "x_api_deployment_date": "29-July-2026"
+    },
+    "chebi_lite_json": {
+      "path": "data/raw/chebi_lite_2026-08-14.json.gz",
+      "media_type": "application/json",
+      "content_encoding": "gzip",
+      "source_url": "https://ftp.ebi.ac.uk/pub/databases/chebi/ontology/chebi_lite.json.gz",
+      "retrieved_at": "2026-09-01T17:25:01Z",
+      "sha256": "d4102c38436128a0fc434dcd250e3d86cf6b36e9315e9c13444b5bf37ab47afe",
+      "bytes": 9490617,
+      "decompressed_content_sha256": "d14526badabba6959c9d5facacb8a97d84b006347fae84cb5d7ca30a91ccd131",
+      "decompressed_content_bytes": 186860803,
+      "ontology_version": "254",
+      "ontology_date_raw": "14:08:2026 10:24",
+      "version_iri": "http://purl.obolibrary.org/obo/chebi/254/chebi_lite.owl",
+      "license": "https://creativecommons.org/licenses/by/4.0/",
+      "canonical_retrieval_command": "curl --fail --location --output data/raw/chebi_lite_2026-08-14.json.gz https://ftp.ebi.ac.uk/pub/databases/chebi/ontology/chebi_lite.json.gz"
+    }
+  },
+  "verification_commands": [
+    "shasum -a 256 data/raw/uniprotkb_cofactor_query_2026_02.json.gz data/raw/uniprotkb_cofactor_query_2026_02.headers.txt data/raw/chebi_lite_2026-08-14.json.gz",
+    "gzip -cd data/raw/uniprotkb_cofactor_query_2026_02.json.gz | shasum -a 256",
+    "gzip -cd data/raw/chebi_lite_2026-08-14.json.gz | shasum -a 256"
+  ]
+}
