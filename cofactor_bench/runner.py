@@ -1006,7 +1006,12 @@ def _redact(value: str, sensitive_values: tuple[str, ...]) -> tuple[str, int]:
     return redacted, count
 
 
-def _subprocess_environment(source: Mapping[str, str]) -> dict[str, str]:
+def _subprocess_environment(
+    source: Mapping[str, str],
+    credential_environment_name: str | None = None,
+) -> dict[str, str]:
+    if credential_environment_name not in {None, "DEEPSEEK_API_KEY"}:
+        raise ValueError("credential_environment_name is not approved")
     environment: dict[str, str] = {}
     for name in _ALLOWED_ENVIRONMENT_NAMES:
         if any(marker in name.upper() for marker in _SENSITIVE_NAME_MARKERS):
@@ -1016,6 +1021,10 @@ def _subprocess_environment(source: Mapping[str, str]) -> dict[str, str]:
             environment[name] = value
     environment.setdefault("PATH", os.defpath)
     environment["NO_COLOR"] = "1"
+    if credential_environment_name is not None:
+        credential = source.get(credential_environment_name)
+        if credential is not None:
+            environment[credential_environment_name] = credential
     return environment
 
 
@@ -1336,6 +1345,7 @@ def _invoke_codex(
     supervisor: _ProcessSupervisor,
     cancellation_event: threading.Event | None,
     model_settings: RunnerModelSettings = DEFAULT_MODEL_SETTINGS,
+    credential_environment_name: str | None = None,
 ) -> _DurableCapture:
     started = time.monotonic()
     started_at = _utc_now()
@@ -1423,7 +1433,9 @@ def _invoke_codex(
             process = subprocess.Popen(
                 launcher_argv,
                 cwd=working_directory,
-                env=_subprocess_environment(os.environ),
+                env=_subprocess_environment(
+                    os.environ, credential_environment_name
+                ),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -2761,9 +2773,12 @@ class CodexExecRunner:
         timeout_seconds: float = 600.0,
         circuit_breaker_threshold: int = DEFAULT_CIRCUIT_BREAKER_THRESHOLD,
         model_settings: RunnerModelSettings = DEFAULT_MODEL_SETTINGS,
+        credential_environment_name: str | None = None,
     ) -> None:
         if not isinstance(model_settings, RunnerModelSettings):
             raise TypeError("model_settings must be RunnerModelSettings")
+        if credential_environment_name not in {None, "DEEPSEEK_API_KEY"}:
+            raise ValueError("credential_environment_name is not approved")
         if (
             isinstance(max_attempts, bool)
             or not isinstance(max_attempts, int)
@@ -2795,6 +2810,7 @@ class CodexExecRunner:
         self.timeout_seconds = float(timeout_seconds)
         self.circuit_breaker_threshold = circuit_breaker_threshold
         self.model_settings = model_settings
+        self.credential_environment_name = credential_environment_name
         self._staging_directory = self.run_dir / ".staging"
         self._supervisor = _ProcessSupervisor()
         self._batch_lock = threading.Lock()
@@ -3638,6 +3654,7 @@ class CodexExecRunner:
                 supervisor=self._supervisor,
                 cancellation_event=cancellation_event,
                 model_settings=self.model_settings,
+                credential_environment_name=self.credential_environment_name,
             )
             state = self._finalize_capture(
                 case=case,

@@ -292,10 +292,13 @@ class CodexExecRunnerTests(unittest.TestCase):
         timeout_seconds: float = 10.0,
         circuit_breaker_threshold: int = 1,
         model_settings: RunnerModelSettings | None = None,
+        credential_environment_name: str | None = None,
     ) -> CodexExecRunner:
         kwargs = {}
         if model_settings is not None:
             kwargs["model_settings"] = model_settings
+        if credential_environment_name is not None:
+            kwargs["credential_environment_name"] = credential_environment_name
         return CodexExecRunner(
             run_dir=self.run_dir,
             executable=self.fake_codex,
@@ -1365,6 +1368,42 @@ class CodexExecRunnerTests(unittest.TestCase):
         for path in self.run_dir.rglob("*"):
             if path.is_file():
                 self.assertNotIn(secret_value, path.read_text(errors="replace"))
+
+    def test_explicit_deepseek_credential_is_forwarded_but_never_persisted(self) -> None:
+        case = self.make_case("MDEEPCREDENTIAL")
+        self.set_scenario("success")
+        secret_value = "test-deepseek-key-never-persist-4fbe92"
+        settings = RunnerModelSettings(
+            model="deepseek-v4-flash",
+            reasoning_effort="high",
+            service_tier="default",
+        )
+        with mock.patch.dict(
+            os.environ,
+            {"DEEPSEEK_API_KEY": secret_value},
+            clear=False,
+        ):
+            result = self.make_runner(
+                model_settings=settings,
+                credential_environment_name="DEEPSEEK_API_KEY",
+            ).run_case(case)
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(
+            self.calls()[0]["sensitive_env_names"], ["DEEPSEEK_API_KEY"]
+        )
+        for path in self.run_dir.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(secret_value, path.read_text(errors="replace"))
+
+    def test_credential_forwarding_rejects_unapproved_environment_names(self) -> None:
+        with self.assertRaisesRegex(ValueError, "credential_environment_name"):
+            CodexExecRunner(
+                run_dir=self.run_dir,
+                executable=self.fake_codex,
+                schema_path=self.schema_path,
+                credential_environment_name="AWS_SECRET_ACCESS_KEY",
+            )
 
     def test_atomic_publish_is_durable_and_never_clobbers_existing_bytes(self) -> None:
         staging = self.base / ".staging"
