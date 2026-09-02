@@ -22,6 +22,13 @@ import statistics
 from typing import Any, Protocol
 
 from .cases import PRIVATE_MAPPING_PURPOSE, PRIVATE_MAPPING_SCHEMA_VERSION
+from .deepseek_adapter import (
+    API_ENDPOINT as DEEPSEEK_API_ENDPOINT,
+    MAX_OUTPUT_TOKENS as DEEPSEEK_MAX_OUTPUT_TOKENS,
+    MODEL as DEEPSEEK_MODEL,
+    REASONING_EFFORT as DEEPSEEK_REASONING_EFFORT,
+    SERVICE_TIER as DEEPSEEK_SERVICE_TIER,
+)
 from .metrics import CalibrationObservation, score_calibration
 from .prediction import Prediction, PredictionValidationError, validate_prediction
 from .prompt import CATALOG_SIZE, PROMPT_VERSION, CatalogTerm, PromptCase, render_prompt
@@ -853,15 +860,6 @@ def _validate_verified_snapshot(
         raise ReportingError("run manifest contract SHA256 differs")
 
     model = _mapping(contract.get("model"), location="run manifest model")
-    expected_model = {
-        "name": MODEL,
-        "reasoning_effort": REASONING_EFFORT,
-        "service_tier": SERVICE_TIER,
-        "prompt_version": PROMPT_VERSION,
-        "response_schema_version": "cofactor9.1.response.v2",
-    }
-    if any(model.get(key) != value for key, value in expected_model.items()):
-        raise ReportingError("run manifest model settings differ from scorer contract")
     binary = _mapping(
         contract.get("codex_binary"), location="run manifest codex_binary"
     )
@@ -870,6 +868,42 @@ def _validate_verified_snapshot(
     transport = _mapping(
         contract.get("transport"), location="run manifest transport"
     )
+    transport_kind = transport.get("kind")
+    if transport_kind == "codex_cli_chatgpt_oauth":
+        expected_runtime = (MODEL, REASONING_EFFORT, SERVICE_TIER)
+    elif transport_kind == "deepseek_official_api":
+        expected_runtime = (
+            DEEPSEEK_MODEL,
+            DEEPSEEK_REASONING_EFFORT,
+            DEEPSEEK_SERVICE_TIER,
+        )
+        expected_transport = {
+            "provider": "deepseek-official",
+            "endpoint": DEEPSEEK_API_ENDPOINT,
+            "max_output_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,
+            "thinking": {"type": "enabled"},
+            "response_format": {"type": "json_object"},
+            "credential_environment_name": "DEEPSEEK_API_KEY",
+            "internal_http_retries": 0,
+        }
+        if any(
+            transport.get(key) != value
+            for key, value in expected_transport.items()
+        ):
+            raise ReportingError(
+                "run manifest DeepSeek transport differs from scorer contract"
+            )
+    else:
+        raise ReportingError("run manifest transport is unsupported")
+    expected_model = {
+        "name": expected_runtime[0],
+        "reasoning_effort": expected_runtime[1],
+        "service_tier": expected_runtime[2],
+        "prompt_version": PROMPT_VERSION,
+        "response_schema_version": "cofactor9.1.response.v2",
+    }
+    if any(model.get(key) != value for key, value in expected_model.items()):
+        raise ReportingError("run manifest model settings differ from scorer contract")
     max_attempts = _positive_int(
         transport.get("max_attempts"), location="run manifest max_attempts"
     )
@@ -1477,6 +1511,7 @@ def _parse_terminal_records(
     values: Mapping[str, bytes],
     cases: Sequence[PromptCase],
     catalog: _Catalog,
+    model_contract: Mapping[str, Any],
 ) -> dict[str, _Terminal]:
     if not isinstance(values, Mapping):
         raise TypeError("terminal_records must be a mapping of sample_id to bytes")
@@ -1498,9 +1533,10 @@ def _parse_terminal_records(
         attempt_count = _positive_int(raw.get("attempt_count"), location=f"terminal {sample_id} attempt_count")
         _timestamp(raw.get("completed_at"), location=f"terminal {sample_id} completed_at")
         if (
-            raw.get("model") != MODEL
-            or raw.get("reasoning_effort") != REASONING_EFFORT
-            or raw.get("service_tier") != SERVICE_TIER
+            raw.get("model") != model_contract.get("name")
+            or raw.get("reasoning_effort")
+            != model_contract.get("reasoning_effort")
+            or raw.get("service_tier") != model_contract.get("service_tier")
             or raw.get("prompt_version") != PROMPT_VERSION
             or raw.get("catalog_version") != catalog.version
         ):
@@ -1609,6 +1645,7 @@ def _parse_incident_bundles(
     cases: Sequence[PromptCase],
     *,
     max_attempts: int,
+    model_contract: Mapping[str, Any],
 ) -> dict[str, tuple[_Incident, ...]]:
     cases_by_sample = {case.sample_id: case for case in cases}
     unknown = set(bundles) - set(cases_by_sample)
@@ -1667,9 +1704,10 @@ def _parse_incident_bundles(
             ):
                 raise ReportingError(f"{location} argv is invalid")
             if (
-                raw.get("model") != MODEL
-                or raw.get("reasoning_effort") != REASONING_EFFORT
-                or raw.get("service_tier") != SERVICE_TIER
+                raw.get("model") != model_contract.get("name")
+                or raw.get("reasoning_effort")
+                != model_contract.get("reasoning_effort")
+                or raw.get("service_tier") != model_contract.get("service_tier")
                 or raw.get("environment_policy") != "fixed-allowlist"
             ):
                 raise ReportingError(f"{location} runtime contract differs")
@@ -1785,6 +1823,7 @@ def _parse_attempt_records(
     values: Mapping[str, Sequence[bytes]] | None,
     terminals: Mapping[str, _Terminal],
     cases: Sequence[PromptCase],
+    model_contract: Mapping[str, Any],
 ) -> dict[str, tuple[_Attempt, ...]]:
     if values is None:
         return {}
@@ -1822,9 +1861,10 @@ def _parse_attempt_records(
             if not isinstance(argv, list) or not argv or any(not isinstance(item, str) for item in argv):
                 raise ReportingError(f"attempt {sample_id}/{offset} argv is invalid")
             if (
-                raw.get("model") != MODEL
-                or raw.get("reasoning_effort") != REASONING_EFFORT
-                or raw.get("service_tier") != SERVICE_TIER
+                raw.get("model") != model_contract.get("name")
+                or raw.get("reasoning_effort")
+                != model_contract.get("reasoning_effort")
+                or raw.get("service_tier") != model_contract.get("service_tier")
                 or raw.get("environment_policy") != "fixed-allowlist"
                 or raw.get("prompt_sha256") != expected_prompt_hash
             ):
@@ -2622,19 +2662,33 @@ def score_run(
         else None
     )
 
-    terminals = _parse_terminal_records(terminal_records, cases, catalog)
+    model_contract = _mapping(
+        verified.contract.get("model"), location="run manifest model"
+    )
+    terminals = _parse_terminal_records(
+        terminal_records,
+        cases,
+        catalog,
+        model_contract,
+    )
     if formal and len(terminals) != expected_count:
         raise ReportingError(
             f"Formal run requires {expected_count} terminal records; observed {len(terminals)}"
         )
     _validate_attempt_bundles(verified.attempt_bundles, terminals, cases)
-    parsed_attempts = _parse_attempt_records(attempt_records, terminals, cases)
+    parsed_attempts = _parse_attempt_records(
+        attempt_records,
+        terminals,
+        cases,
+        model_contract,
+    )
     if formal and not parsed_attempts:
         raise ReportingError("formal run requires a complete attempt ledger for usage/latency")
     parsed_incidents = _parse_incident_bundles(
         verified.incident_bundles,
         cases,
         max_attempts=max_attempts,
+        model_contract=model_contract,
     )
 
     link_by_sample = {link.sample_id: link for link in links}
@@ -2840,9 +2894,6 @@ def score_run(
     )
     binary_contract = _mapping(
         verified.contract.get("codex_binary"), location="run manifest codex_binary"
-    )
-    model_contract = _mapping(
-        verified.contract.get("model"), location="run manifest model"
     )
     provenance = {
         "run_manifest": {

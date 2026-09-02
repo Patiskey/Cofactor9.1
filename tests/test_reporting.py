@@ -11,6 +11,7 @@ from cofactor_bench.cases import (
     PRIVATE_MAPPING_PURPOSE,
     PRIVATE_MAPPING_SCHEMA_VERSION,
 )
+from cofactor_bench.deepseek_adapter import API_ENDPOINT, MAX_OUTPUT_TOKENS
 from cofactor_bench.prompt import PromptCase, render_prompt
 from cofactor_bench.run import LedgerBundle, RunValidationSummary, VerifiedRunSnapshot
 from cofactor_bench.reporting import (
@@ -627,11 +628,40 @@ class ReportingFixture(unittest.TestCase):
         full_records: list[dict[str, object]] | None = None,
         ontology_pairs: list[dict[str, object]] | None = None,
         artifact_bytes: dict[str, bytes] | None = None,
+        model_contract: dict[str, object] | None = None,
+        transport_contract: dict[str, object] | None = None,
     ) -> VerifiedRunSnapshot:
         cases = public_cases or self.public_cases
         terminals = self.terminals if terminal_records is None else terminal_records
         attempts = self.attempts if attempt_records is None else attempt_records
         incidents = self.incidents if incident_records is None else incident_records
+        runtime_model = model_contract or {
+            "name": "gpt-5.6-sol",
+            "reasoning_effort": "max",
+            "service_tier": "fast",
+            "prompt_version": "cofactor9.1.sequence-only.named-catalog.v2",
+            "response_schema_version": "cofactor9.1.response.v2",
+        }
+        if model_contract is not None:
+            def rewrite_runtime(payload: bytes) -> bytes:
+                value = json.loads(payload)
+                value["model"] = runtime_model["name"]
+                value["reasoning_effort"] = runtime_model["reasoning_effort"]
+                value["service_tier"] = runtime_model["service_tier"]
+                return _json_bytes(value)
+
+            terminals = {
+                sample_id: rewrite_runtime(payload)
+                for sample_id, payload in terminals.items()
+            }
+            attempts = {
+                sample_id: tuple(rewrite_runtime(payload) for payload in payloads)
+                for sample_id, payloads in attempts.items()
+            }
+            incidents = {
+                sample_id: tuple(rewrite_runtime(payload) for payload in payloads)
+                for sample_id, payloads in incidents.items()
+            }
         artifacts = (
             dict(artifact_bytes)
             if artifact_bytes is not None
@@ -668,20 +698,14 @@ class ReportingFixture(unittest.TestCase):
                 "expected_formal_count": len(cases),
                 "selected_count": len(cases),
             },
-            "model": {
-                "name": "gpt-5.6-sol",
-                "reasoning_effort": "max",
-                "service_tier": "fast",
-                "prompt_version": "cofactor9.1.sequence-only.named-catalog.v2",
-                "response_schema_version": "cofactor9.1.response.v2",
-            },
+            "model": runtime_model,
             "codex_binary": {
                 "requested": "codex",
                 "resolved_path": "/fixture/codex",
                 "sha256": "e" * 64,
                 "version": "codex-cli 0.152.0",
             },
-            "transport": {
+            "transport": transport_contract or {
                 "kind": "codex_cli_chatgpt_oauth",
                 "max_attempts": 3,
                 "timeout_seconds": 600.0,
@@ -1194,6 +1218,42 @@ class ScoreRunTests(ReportingFixture):
 
 
 class ReportingValidationTests(ReportingFixture):
+    def test_deepseek_runtime_contract_is_scored_from_the_frozen_manifest(self) -> None:
+        model = {
+            "name": "deepseek-v4-flash",
+            "reasoning_effort": "high",
+            "service_tier": "default",
+            "prompt_version": "cofactor9.1.sequence-only.named-catalog.v2",
+            "response_schema_version": "cofactor9.1.response.v2",
+        }
+        snapshot = self.snapshot(
+            model_contract=model,
+            transport_contract={
+                "kind": "deepseek_official_api",
+                "provider": "deepseek-official",
+                "endpoint": API_ENDPOINT,
+                "max_output_tokens": MAX_OUTPUT_TOKENS,
+                "thinking": {"type": "enabled"},
+                "response_format": {"type": "json_object"},
+                "credential_environment_name": "DEEPSEEK_API_KEY",
+                "internal_http_retries": 0,
+                "max_attempts": 3,
+                "timeout_seconds": 600.0,
+                "circuit_breaker_threshold": 1,
+            },
+        )
+
+        report = score_run(
+            verified_run_snapshot=snapshot,
+            expected_case_count=5,
+        ).to_dict()
+
+        self.assertEqual(report["provenance"]["model"]["name"], model["name"])
+        self.assertEqual(
+            report["provenance"]["model"]["reasoning_effort"],
+            model["reasoning_effort"],
+        )
+
     def test_verified_snapshot_fails_closed_on_manifest_artifact_and_ledger_drift(self) -> None:
         snapshot = self.snapshot()
         with self.assertRaisesRegex(ReportingError, "manifest SHA256"):
