@@ -14,5 +14,9 @@ data/raw/*.obo
 data/raw/*.owl
 
 # Large generated run payloads remain local but are fully manifested.
-runs/*/attempts/
+runs/*/cases/*/attempts/
 runs/*/raw_responses/
+
+# The private case map links opaque prompt IDs back to UniProt accessions.
+# It is regenerated locally for scoring and must never be published.
+data/derived/cases.private-map.jsonl
